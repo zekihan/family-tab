@@ -143,7 +143,7 @@ Compute balances from the current records whenever a record changes or the date 
    - **Payments received** and **Cash returned** show the gross totals for the two types of cash entries. **Credit** is the positive net receipts left after filling all purchase amounts. A person with credit has nothing left to pay. Credit automatically covers that person's later purchases.
    - Home totals are sums of each person's figures and include archived people, with a separate subtotal for archived balances. Credit stays with the person who paid it and never reduces another person's balance.
 
-A new payout is limited to the person's available credit: their credit computed as if every pending-undo deletion were undone. If a later correction leaves net receipts negative, save the correction and show the cash shortfall. A payout already made offline can exceed available credit by the time it reaches the server. Hold it for review and let the buyer explicitly confirm it as money already returned.
+A new payout is limited to the person's credit. While any deletion that affects that person is pending undo, **Record cash returned** is unavailable for them, for at most seven seconds, so the client and server always check the same credit. If a later correction leaves net receipts negative, save the correction and show the cash shortfall. A payout already made offline can exceed available credit by the time it reaches the server. Hold it for review and let the buyer explicitly confirm it as money already returned.
 
 ```mermaid
 flowchart LR
@@ -184,9 +184,12 @@ flowchart TD
     P -->|Record shop refund| F[Refund sheet]
     P -->|Record cash returned| C[Payout sheet]
     P -->|Archive person| A[Archive]
-    P -->|Delete on a purchase or payment| U[Deleted + Undo toast]
+    P -->|Delete on a record| U[Deleted + Undo toast]
     AP -->|Save| R[Return to the opening screen]
     RP -->|Save| P
+    H -->|Sync banner| RV[Review]
+    H -->|Menu| S[Settings]
+    S --> X[Time zone, export, restore, sign out]
 ```
 
 ### Home
@@ -217,10 +220,10 @@ Purchase date (default today) and note are secondary optional fields that stay c
 ### Person page
 
 - Show **Due by today**, **Left to pay**, **Payments received**, **Cash returned**, and any positive **Credit**. Itemize any cash shortfall under Left to pay.
-- Offer **Record a payment** as the primary action. Offer **Add purchase** for active people and **Record cash returned** when there is available credit. **Edit person** changes the name and payday; payday changes affect only defaults for new purchases.
+- Offer **Record a payment** as the primary action. Offer **Add purchase** for active people and **Record cash returned** when there is credit and no pending-undo deletion affects them. **Edit person** changes the name and payday; payday changes affect only defaults for new purchases.
 - Purchases appear newest first. Each card shows the item, original total, refunds, plan, progress, amount left and earliest unpaid dated amount. **Show dates** includes both schedules. The card offers Edit, Delete and Record shop refund where applicable.
 - Show incoming payments and payouts in dated history, newest first. Offer Edit and Delete on both.
-- **Archive person** explains any outstanding balance before confirmation and preserves their records. The archive allows payments, shop refunds, and payouts. Unarchive the person before adding a purchase to their ledger or moving one to it. People are archived, never deleted, except a person with no records.
+- **Archive person** explains any outstanding balance before confirmation and preserves their records. The archive allows payments, shop refunds, and payouts. Unarchive the person before adding a purchase to their ledger or moving one to it. People are archived, never deleted, except a person with no records, who shows a **Delete person** action instead. That deletion is permanent and has the usual undo window.
 
 ### Record a payment
 
@@ -233,7 +236,15 @@ Purchase date (default today) and note are secondary optional fields that stay c
 - Open any existing record in its form to edit it. Keep its ID and recompute balances for everyone affected when the edit is saved. Editing a purchase's person moves it, with its shop refunds, to another active person's ledger. Payments and payouts can also be moved to another person. A moved payout is checked in full against the destination person's credit.
 - Record a shop refund from its purchase with an amount, date and optional note. Show refunds in purchase history and offer correction or removal there. Removing a refund uses the same one-tap delete with undo. Block changes that would leave refunds above the purchase total or before the purchase date. Review and remove linked shop refunds before deleting the purchase.
 - Record cash returned from the person's page with an amount, date and optional note. Show the available credit before saving. Allow corrections to payout records and check available credit against any increase. Recording the shop refund and recording the cash payout are separate actions.
-- Delete payments, payouts, shop refunds, and purchases without shop refunds in one tap. Apply the deletion locally and hold the queued operation for seven seconds. **Undo** cancels it and restores the records with their original IDs. Credit freed by a deletion cannot fund a payout until the undo window closes. Undoing a shop refund deletion also cancels a pending deletion of its purchase, so the refund is never restored without its purchase. After a reload, offer Undo for the time remaining on the saved deadline.
+- Delete payments, payouts, shop refunds, and purchases without shop refunds in one tap. Apply the deletion locally and hold the queued operation for seven seconds. **Undo** cancels it and restores the records with their original IDs. Undoing a shop refund deletion also cancels a pending deletion of its purchase, so the refund is never restored without its purchase. After a reload, offer Undo for the time remaining on the saved deadline.
+
+### Review
+
+- The Home sync banner opens Review when any operation needs review. Review lists each held operation with its reason, the local and server versions or the blocking records, the related operations waiting behind it, and the actions from [Sync](#sync) rule 6. Restore review uses the same screen.
+
+### Settings
+
+- Reached from a Home menu. Holds the ledger time zone, Export, Restore, and Sign out, each following section 7.
 
 ### Visual language
 
@@ -260,23 +271,23 @@ Purchase date (default today) and note are secondary optional fields that stay c
 
 1. **Local writes.** Persist each operation in IndexedDB before showing its effect, in the same transaction that checks the signed-out marker, so a purge and a write can never both commit. Generate stable IDs for records and operations on the client. Operations are creates, deletions, or field-level patches of a single record. A deletion stores the full pre-image of every record it removes, so Undo works after a reload. An edit form records the ledger generation and the record version when it opens. The save checks both in the same transaction. If either changed, the form does not save over the record and shows the current version so the buyer can reapply their change.
 2. **Two held states.** *Pending undo* is a deletion inside its seven-second window: applied locally, counted in balances, not yet sent. *Needs review* is an operation the server did not accept: shown in the review view and excluded from balances until the buyer resolves it.
-3. **Order.** Send operations in queue order within each group of related work. Operations are related when they touch the same record, or change the schedule or net receipts of the same person. Refunds belong to their purchase's person. A purchase, payment or payout that moves between people belongs to both the old and the new person. Creating or archiving a person comes before any operation on their ledger. Operations for unrelated people sync independently. A pending-undo deletion holds back later related operations until its deadline.
-4. **Commit.** Each operation carries the ledger generation and, for updates and deletions, the record version it was based on. The record version is the ID of the last operation that changed it. The server validates the operation against the [validation rules](#validation-rules) and the current records, applies it, and stores a receipt with its ID, result, generation and revision, all in one transaction. Receipts live outside the ledger rows, so a restore does not erase them. A retry of a committed operation returns its original receipt. A deterministic rejection is also stored as a receipt and is never retried automatically.
+3. **Order.** Send operations in queue order within each group of related work. Operations are related when they touch the same record, or change the schedule or net receipts of the same person. Refunds belong to their purchase's person. A purchase, payment or payout that moves between people belongs to both the old and the new person. Creating a person comes before any operation on their ledger. Archiving a person keeps its place in queue order. Operations for unrelated people sync independently. A pending-undo deletion holds back later related operations until its deadline.
+4. **Commit.** The server holds, without applying, any uncommitted operation whose generation differs from the current one, and the client sends it to restore review. Each operation carries the ledger generation and, for updates and deletions, the record version it was based on. The record version is the ID of the last operation that changed it. The server validates the operation against the [validation rules](#validation-rules) and the current records, applies it, and stores a receipt with its ID, result, generation and revision, all in one transaction. Receipts live outside the ledger rows, so a restore does not erase them. A retry of a committed operation returns its original receipt. A deterministic rejection is also stored as a receipt and is never retried automatically.
 5. **Cycle.** Run one sync cycle at a time per device, using a lock that is released if its tab crashes or closes, such as the Web Locks API. Sync after a local change, at startup, on returning to the foreground, when the connection returns, and on manual request. While open and connected, refresh every 30 seconds. Each cycle:
-   1. Sends the IDs of queued operations and receives receipts for any already committed or rejected.
+   1. Sends the IDs of queued operations and receives receipts for any already committed or rejected, together with the current generation. If the generation changed, move queued operations to restore review before sending anything.
    2. Sends the remaining operations in order.
    3. Fetches a full snapshot with its generation, revision and record versions.
    4. In one local transaction, saves the snapshot and removes every acknowledged operation whose receipt generation equals the snapshot's and whose revision is at most the snapshot's. If the revision is newer, fetch again.
-   5. Rebuilds the local view by replaying the remaining queued operations over the snapshot.
-6. **Review.** An operation needs review when it conflicts with a newer version of the same record, including a deletion against an edit; when the server rejects it for a validation rule, with the server's reason and the blocking records; or when a payout no longer fits the person's credit. For a conflict the buyer keeps the server version or the local one. For a rejection they edit and resubmit or discard. For a payout they confirm that the cash was already returned, which resubmits it with an `alreadyReturned` flag that lets the server accept it above available credit. Balances are then computed normally, and a cash shortfall appears only if net receipts become negative. Every resubmission uses a new operation ID. Keeping a local edit of a record that another device deleted recreates the record with its original ID and goes through normal validation. Later related operations wait with the held one and are never rebased automatically. After the buyer resolves it they are sent again, and any that now fail come back to review with their own reason.
-7. **After a restore.** Compare generations only for equality. An operation created against, or committed in, a generation other than the current one is dropped when the snapshot already contains its record with the same content, as happens when the restored backup included it. Otherwise it goes to restore review.
+   5. Rebuilds the local view by replaying the remaining sendable and pending-undo operations over the snapshot. Operations that need review, and the related operations waiting behind them, are left out of the local ledger and its balances and appear only in Review.
+6. **Review.** An operation needs review when it conflicts with a newer version of the same record, including a deletion against an edit; when the server rejects it for a validation rule, with the server's reason and the blocking records; or when a payout no longer fits the person's credit. For a conflict the buyer keeps the server version or the local one. For a rejection they edit and resubmit or discard. For a payout they confirm that the cash was already returned, which resubmits it with an `alreadyReturned` flag that lets the server accept it above available credit. Balances are then computed normally, and a cash shortfall appears only if net receipts become negative. Every resubmission uses a new operation ID and, as its base, the record version the buyer just reviewed, so keeping a local version does not conflict again. Keeping a local edit of a record that another device deleted recreates the record with its original ID and goes through normal validation. Later related operations wait with the held one and are never rebased automatically. After the buyer resolves it they are sent again, and any that now fail come back to review with their own reason.
+7. **After a restore.** Compare generations only for equality. An operation created against, or committed in, a generation other than the current one is dropped when the snapshot already reflects it: a create or update when the record has the intended content, a deletion when the record is absent. This happens when the restored backup already included it. Otherwise it goes to restore review, where reapplying keeps the original record ID and uses the current record version as its base.
 8. **Sign-out.** After sign-out, discard any in-flight results from the signed-out session.
 
 ### Backup and restore
 
-- **Export** a versioned JSON file with TRY, the ledger time zone, people, purchases, payments, shop refunds and payouts. Include pending changes reflected in the local ledger and allow export offline. Pending-undo deletions are exported as applied. List operations that need review, with their full content, in a separate unapplied section, and keep them available for review until resolved. Back up the server database separately for recovery after server data loss.
-- **Restore** requires a connection and an empty local queue. Validate the backup, preview what will be replaced, and ask for confirmation. Preview without a lock. At confirmation, take the cross-tab sync lock, recheck that the queue is empty and the revision still matches, and commit. While the lock is held, other tabs show a "Restore in progress" state and block Save. When the restore finishes or fails, or its tab closes, release the lock and broadcast so every tab reloads or returns to normal. Use an operation ID for safe retries and replace the server ledger in one transaction only if its revision still matches the preview. After a successful restore, refresh the local copy from the server. Validation or write failures leave the ledger intact.
-- Give the restored ledger a new generation. Operations from another device that were queued against the previous generation are held for the buyer to review against the restored ledger. For each one the buyer can discard it, or apply it as a new operation against the restored ledger, which goes through normal validation and conflict checks. Operations in the backup's unapplied section enter the same review after a restore, in their original order and with their dependencies, unless the restored ledger already contains their record with the same content.
+- **Export** a versioned JSON file with TRY, the ledger time zone, people, purchases, payments, shop refunds and payouts. Include pending changes reflected in the local ledger and allow export offline. Pending-undo deletions are exported as applied. List operations that need review in a separate unapplied section, with their kind, target ID, payload or pre-image, base version, generation, order and dependencies, and keep them available for review until resolved. Back up the server database separately for recovery after server data loss.
+- **Restore** requires a connection and an empty local queue. Validate the backup, preview what will be replaced, and ask for confirmation. Preview without a lock. At confirmation, take the cross-tab sync lock, recheck that the queue is empty and the revision still matches, and commit. While the lock is held, other tabs show a "Restore in progress" state and block Save. When the restore finishes or fails, or its tab closes, release the lock and broadcast so every tab reloads or returns to normal. The restore carries an operation ID. The server first looks up its receipt, stored outside the ledger rows, and returns it if the restore already committed. Otherwise it replaces the ledger in one transaction only if the revision still matches the preview, and gives the restored ledger a new generation and a revision one greater than the preview's. After a successful restore, refresh the local copy from the server. Validation or write failures leave the ledger intact.
+- Give the restored ledger a new generation. Operations from another device that were queued against the previous generation are held for the buyer to review against the restored ledger. For each one the buyer can discard it, or apply it as a new operation against the restored ledger, which goes through normal validation and conflict checks. Operations in the backup's unapplied section enter the same review after a restore, in their original order and with their dependencies, unless the restored ledger already reflects them, as defined in [Sync](#sync) rule 7.
 
 ### Verification
 
@@ -288,15 +299,24 @@ Purchase date (default today) and note are secondary optional fields that stay c
 
 ### Validation rules
 
-The client checks these on save, and the server checks them on every operation and on restore:
+The client checks these on save, and the server checks them on every operation. "Today" and "the future" always mean the calendar date in the stored ledger time zone, whatever the server's own time zone.
 
+Record rules, also checked on every record in a restore:
+
+- The ledger time zone is a valid IANA name and the currency is TRY. Person names and purchase items are non-empty after trimming. Payday, when set, is from 1 through 31.
 - Amounts are positive whole kuruş, at most 100,000,000 TL per entry. At that cap, totals stay within JavaScript's safe integers for any realistic ledger.
 - Purchase, payment, refund and payout dates are not in the future. Due dates and refund dates are on or after the purchase date.
 - A one-time purchase has no installment fields. An installment purchase has a count from 2 to 120, each installment at least one kuruş, and `firstDue` equal to `dueDay` clamped to its month.
-- A purchase's refunds sum to at most its price. A purchase with refunds cannot be deleted.
-- A new or moved purchase belongs to an existing, active person. Payments, payouts and refunds reference existing records.
-- A payout that is new, increased or moved fits the destination person's available credit, unless it carries `alreadyReturned`. Available credit is the credit with this payout removed and every pending-undo deletion left unapplied.
+- A purchase's refunds sum to at most its price.
+- Purchases, payments, payouts and refunds reference existing records.
 - IDs are unique.
+
+Change rules, checked only on operations and never against restored records, so a restored archived person's purchases and a restored payout that leaves a cash shortfall stay valid:
+
+- A new or moved purchase belongs to an active person.
+- A purchase with refunds cannot be deleted.
+- A payout that is new, increased or moved fits the destination person's credit computed without that payout, unless the operation carries `alreadyReturned`.
+- A person can be deleted only when no purchase, payment or payout references them at commit time.
 
 ### Parsing amounts
 
