@@ -23,7 +23,7 @@ Goals:
 3. For each person the app always answers "how much do they owe me in total?" and "how much of that is due by today?"
 4. Payments of any size work without having to tie them to a specific purchase.
 5. Works on a phone, which is where purchases happen.
-6. After initial sign-in and download, the buyer can use the ledger offline. Changes sync to the server when a connection returns, and the buyer can open the same ledger on another device.
+6. After initial SSO sign-in and download, the buyer can use the ledger offline. Changes sync to the server when a connection returns, and the buyer can open the same ledger on another device.
 
 Non-goals (v1):
 
@@ -211,9 +211,14 @@ Purchase date defaults to today. Who, what and price are required. Date shortcut
 ### PWA and server
 
 - Serve the installable PWA and an authenticated ledger API over HTTPS from the same origin. Use one buyer account per ledger. The server authorizes every read and write against that account and stores the synced ledger in SQLite on persistent storage.
-- Initial sign-in and download require a connection. A service worker caches the app shell. IndexedDB stores the last synced ledger and a queue of pending operations, scoped to the signed-in buyer. Once set up, the buyer can reopen the app, read balances, add records and delete or undo while offline.
+- A service worker caches the app shell. IndexedDB stores the last synced ledger and a queue of pending operations, scoped to the signed-in buyer. Once set up, the buyer can reopen the app, read balances, add records and delete or undo while offline.
 - Balance logic lives in a pure, framework-free module that takes the records and an explicit `today` date. The app computes balances from the last synced records plus pending local changes. The server stores records and sync metadata. It validates writes before committing them.
-- Keep pending changes when authentication expires and ask the buyer to sign back in for sync. Signing out clears the device's local ledger. If changes are pending, offer to sync first or ask the buyer to confirm discarding them.
+
+### Sign-in
+
+- **Sign in with SSO** is the only sign-in action. Use one configurable OpenID Connect (OIDC) provider per deployment and delegate account and credential management to that provider. Allow access only to the configured buyer identity, identified by the verified issuer (`iss`) and subject (`sub`) pair. [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability)
+- The server handles the OIDC authorization code flow with PKCE (`S256`), validates the callback and issues its own session in a `Secure`, `HttpOnly`, `SameSite=Lax` cookie. Keep provider tokens on the server and protect API writes against cross-site requests. [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html#CodeFlowAuth), [OAuth 2.0 Security Best Current Practice](https://www.rfc-editor.org/rfc/rfc9700.html#section-2.1.1)
+- Initial sign-in and download require a connection. If the server session expires, keep the cached ledger and pending operations available offline. Resume sync only after the same buyer signs back in through SSO. Signing out while connected ends the app session and clears the device's local ledger. If changes are pending, offer to sync first or ask the buyer to confirm discarding them.
 
 ### Sync
 
@@ -231,6 +236,7 @@ Purchase date defaults to today. Who, what and price are required. Date shortcut
 ### Verification
 
 - Test scheduling, allocation, amount parsing and backup validation. Exercise the PWA after an online setup with the network disabled, then reload and reconnect. Check that a retried payment is recorded once, undo works after a reload, another device sees synced changes, and a concurrent deletion or backup restore preserves conflicting local changes for review.
+- Verify that only the configured SSO identity can access the ledger, that an expired session preserves offline changes until the buyer signs back in, and that signing out clears the cached ledger.
 
 ## 8. Edge cases
 
@@ -265,7 +271,7 @@ Purchase and payment fields use the same rules. Trim surrounding whitespace and 
 
 | Phase | Scope |
 | --- | --- |
-| v1 – MVP | People, purchases (once / installments), payments, oldest-first balances, home and person pages, delete + undo, installable offline PWA, buyer sign-in, server sync across devices, JSON backup |
+| v1 – MVP | People, purchases (once / installments), payments, oldest-first balances, home and person pages, delete + undo, installable offline PWA, SSO-only sign-in, server sync across devices, JSON backup |
 | v2 | Edit purchases, split purchases between people, target payments to a purchase, search and filter, archive settled purchases |
 | v3 | View-only family links, shareable "what you owe" summary, optional monthly reminder |
 | Later | Attach the order screenshot or receipt, import from shop order emails, statistics (spending per person per month) |
