@@ -19,7 +19,7 @@ Family Tab is a small personal app for the person who buys things online for the
 Goals:
 
 1. With an existing person and default dates, adding a purchase takes under 15 seconds and uses at most five fields before Save.
-2. The buyer can correct a purchase or payment in place. Eligible purchases and payments can be deleted in one tap, with undo.
+2. The buyer can correct any purchase, payment, shop refund or payout in place. Payments, payouts, and purchases without shop refunds can be deleted in one tap with undo.
 3. For each person the app always answers "how much do they owe me in total?" and "how much of that is due by today?"
 4. Partial payments and overpayments work at the person level. The ledger also accounts for shop refunds and cash returned to a family member.
 5. Works on a phone, which is where purchases happen.
@@ -54,11 +54,18 @@ User stories:
 
 ```mermaid
 erDiagram
+    LEDGER ||--o{ PERSON : "contains"
     PERSON ||--o{ PURCHASE : "is bought for"
     PERSON ||--o{ PAYMENT : "pays back"
     PERSON ||--o{ PAYOUT : "receives cash back"
     PURCHASE ||--o{ REFUND : "has shop refunds"
-    PURCHASE ||--|{ INSTALLMENT : "is split into (derived)"
+    PURCHASE ||--|{ SCHEDULED_AMOUNT : "is split into (derived)"
+    LEDGER {
+        string timeZone "IANA name"
+        string currency "TRY in v1"
+        string generation "changes on restore"
+        int revision "increments on each commit"
+    }
     PERSON {
         string id
         string name
@@ -99,21 +106,23 @@ erDiagram
         date paidOutOn
         string note "optional"
     }
-    INSTALLMENT {
+    SCHEDULED_AMOUNT {
         string purchaseId
-        int sequence
-        int amountMinor
-        date dueOn
+        int sequence "1 for a one-time purchase"
+        int baseMinor
+        int adjustedMinor "after shop refunds"
+        date dueOn "optional, once only"
     }
 ```
 
 Key decisions:
 
+- **One ledger per deployment.** The `LEDGER` record holds settings and sync metadata. Every stored record also carries a `version` used by sync (section 7). Scheduled amounts are derived and never stored.
 - **The app derives a base schedule and an adjusted schedule.** The base schedule uses `totalMinor`, `count`, `firstDue` and `dueDay`. A one-time purchase produces a single scheduled amount with an optional date. The adjusted schedule accounts for shop refunds. The base schedule remains visible in purchase history.
 - **Payments and payouts belong to a person.** A payment records money received from that person. A payout records money returned to them. A shop refund belongs to a purchase and can be recorded separately from any payout.
 - **V1 uses TRY.** Store positive, safely representable integer amounts in kuruş. Keep totals exact even when they exceed the range of a JavaScript safe integer.
-- **Household purchases** can use a regular person entry named "Household". The amount appears under Household and in Home totals. Individual balances use their own ledger entries.
-- **Dates are calendar dates** stored as `YYYY-MM-DD`. Store one ledger time zone, defaulting to the buyer's time zone at setup. All devices use it for today and date shortcuts. Purchase, payment, shop refund and payout dates can be backdated through today. Due dates and refund dates must be on or after the purchase date. Payday, when set, is a day from 1 through 31.
+- **Household purchases** can use a regular person entry named "Household". The amount appears under Household and in Home totals and does not affect any individual's balance.
+- **Dates are calendar dates** stored as `YYYY-MM-DD`. Store one ledger time zone, defaulting to the buyer's time zone at setup. All devices use it for today and date shortcuts. Purchase, payment, shop refund and payout dates can be backdated but cannot be in the future. Due dates and refund dates must be on or after the purchase date. Payday, when set, is a day from 1 through 31.
 
 ## 5. Balance rules
 
@@ -121,18 +130,18 @@ Compute balances from the current records whenever a record changes or the date 
 
 1. **Build the schedule.** Each purchase creates one or more scheduled amounts.
    - All at once: one amount, with the optional due date or none ("whenever they can").
-   - Installments start on `firstDue`. Each date, including `firstDue`, uses `dueDay` clamped independently to that month's last day. Accept 2 to 120 installments, each worth at least one minor unit.
-2. **Split evenly in minor units.** `base = floor(total / count)`. The remainder is spread one unit at a time over the first installments. 100.00 in 3 becomes 33.34, 33.33, 33.33, which always sums exactly to the total.
+   - Installment *n* falls *n* − 1 months after the month of `firstDue`. Each date, including `firstDue`, uses `dueDay` clamped independently to that month's last day, so `firstDue` must equal `dueDay` clamped to its own month. Accept 2 to 120 installments, each worth at least one minor unit.
+2. **Split evenly in minor units.** For installments, `base = floor(total / count)`. The remainder is spread one unit at a time over the first installments. 100.00 in 3 becomes 33.34, 33.33, 33.33, which always sums exactly to the total.
 3. **Apply shop refunds.** Reduce the last installment first and work backward until the refund is exhausted. Keep the original amounts and due dates visible. Zeroed installments remain in the purchase history and contribute zero to the balance. A one-time purchase has only one amount to reduce. The total refunded for a purchase cannot exceed its price.
 4. **Order dated amounts first.** Sort all dated amounts, including future ones, by due date. Then sort undated amounts by purchase date. Break ties by purchase date, purchase ID in lexicographic order, then installment sequence.
-5. **Allocate net receipts.** Subtract payouts from payments received. If net receipts are positive, fill the adjusted scheduled amounts in order, allowing partial fills. If net receipts are negative, show their absolute value as a separate undated cash shortfall and use zero for allocation.
+5. **Allocate net receipts.** Subtract payouts from payments received. If net receipts are positive, fill the adjusted scheduled amounts in order, allowing partial fills. If net receipts are negative, show their absolute value as a separate undated cash shortfall and use zero for allocation. Allocation ignores payment dates: a payment covers amounts by schedule order, even amounts added after it was received.
 6. **Derive the numbers from the remaining amounts.**
    - **Left to pay** is the sum of unpaid purchase amounts and any cash shortfall.
    - **Due by today** is the unpaid part of dated amounts due on or before today.
    - **Behind plan** applies if a dated amount due before today is still unpaid. Use a calm amber status.
    - **Due in the next month** is the unpaid part of dated amounts due after today through the same day next month, clamped to month end. **Coming up** lists the first eight unpaid amounts in that window using the same sort order across all people.
-   - **Payments received** and **Cash returned** show the gross totals for the two types of cash entries. **Credit** is the positive net receipts left after filling all purchase amounts. Credit automatically applies to that person's next purchase.
-   - Home totals include archived people, with a separate subtotal for archived balances. Credit stays with the person who paid it.
+   - **Payments received** and **Cash returned** show the gross totals for the two types of cash entries. **Credit** is the positive net receipts left after filling all purchase amounts. A person with credit has nothing left to pay. Credit automatically covers that person's later purchases.
+   - Home totals are sums of each person's figures and include archived people, with a separate subtotal for archived balances. Credit stays with the person who paid it and never reduces another person's balance.
 
 A new payout is limited to the person's current credit. If a later correction leaves net receipts negative, save the correction and show the cash shortfall. A payout already made offline can exceed available credit by the time it reaches the server. Hold it for review and let the buyer explicitly confirm it as money already returned.
 
@@ -156,9 +165,10 @@ Worked example, Mom (payday on the 15th):
 
 Payments: 4,000 TL on Oct 16. On Nov 22:
 
-- Sep and Oct installments are paid. Nov 15 (2,000 TL) is unpaid, so due by today = 2,000 TL.
-- Total owed = 12,349.50 − 4,000 = 8,349.50 TL.
-- Due in the next month = 2,000 TL for Dec 15.
+- Sep and Oct installments are paid. Nov 15 (2,000 TL) is unpaid, so Due by today = 2,000 TL and Mom is Behind plan.
+- Left to pay = 12,349.50 − 4,000 = 8,349.50 TL.
+- Due in the next month (Nov 23 through Dec 22) = 2,000 TL for Dec 15.
+- The towels are undated, so they count only toward Left to pay. They are filled after every dated installment, including Dec through Feb.
 
 If a 600 TL purchase has three 200 TL installments and the shop refunds 150 TL, the adjusted schedule is 200, 200 and 50 TL. If a refund leaves 500 TL of credit and the buyer returns 300 TL, 200 TL of credit remains. If a correction changes payments received from 600 TL to 400 TL against 500 TL of payouts, the 100 TL cash shortfall increases Left to pay and leaves Due by today unchanged.
 
@@ -170,7 +180,7 @@ flowchart TD
     H -->|+ Add purchase| AP[Add purchase sheet]
     P -->|Record a payment| RP[Payment sheet]
     P -->|Add purchase| AP
-    P -->|Edit purchase or payment| E[Edit existing record]
+    P -->|Edit a record or the person| E[Edit existing record]
     P -->|Record shop refund| F[Refund sheet]
     P -->|Record cash returned| C[Payout sheet]
     P -->|Archive person| A[Archive]
@@ -181,9 +191,9 @@ flowchart TD
 
 ### Home
 
-- Headline: **Your family owes you X**.
+- Headline: **Your family owes you X**, the sum of Left to pay across all people. Show total credit held separately when positive.
 - Two figures show **Due by today** and **Due in the next month**.
-- One row per active person shows their name, amount left and a status chip. In order, show credit if positive, "All paid" if nothing is left, the amount due by today if positive, the earliest unpaid future date if any, or "When they can". Include "Behind plan" in the chip when the person meets that rule.
+- One row per active person shows their name, amount left and a status chip. Sort rows by Due by today, then Left to pay, both descending, then name. In order, show credit if positive, "All paid" if nothing is left, the amount due by today if positive, the earliest unpaid future date if any, or "When they can". Include "Behind plan" in the chip when the person meets that rule.
 - Show the archived balance subtotal and link to the archive. Home totals and Coming up include archived people, with an archive label on their upcoming entries.
 - **Coming up** shows the person, item, date and remaining amount for each entry in the upcoming list.
 - Show sync status when changes are pending, the app is offline, or the buyer needs to sign in or resolve a conflict. Locally saved changes appear in balances immediately. Include a **Sync now** action.
@@ -197,24 +207,24 @@ Bottom sheet, one screen, no wizard:
 2. **What** – free text ("Vacuum cleaner").
 3. **Total price** – numeric keyboard. Accepts both `1.250,50` and `1,250.50` under the amount parsing rules below.
 4. **How they pay back** – segmented control:
-   - *All at once* (default) has an optional date. Chips include No fixed date (default), Their payday (when set), End of month and In 2 weeks. A custom date can also be entered.
+   - *All at once* (default) has an optional date. Chips include No fixed date (default), Their payday (when set; the first payday on or after today), End of month (the current month's last day) and In 2 weeks (today plus 14 days). A custom date can also be entered.
    - *In installments* offers count chips 2 / 3 / 4 / 6 / 9 / 12 / other, with 2 selected initially. The first due date defaults to the first payday on or after today, or one calendar month from today if payday is unset.
 
 For installments, the live preview shows the count, first and last dates, and amount or range of amounts. Use "6 × 2,000 TL" when all six amounts are equal.
 
-Purchase date defaults to today. Who, what and price are required. Date shortcuts use today in the ledger time zone, even for a backdated purchase. Payday resolves to the chosen day clamped to the last day of each candidate month. The installment default keeps the payday as its monthly anchor, or today's day when payday is unset. Selecting a custom first due date uses its day as the anchor. Save the resolved dates and anchor on the purchase so changing someone's payday only changes defaults for new entries.
+Purchase date (default today) and note are secondary optional fields that stay collapsed until opened. Who, what and price are required. Date shortcuts use today in the ledger time zone, even for a backdated purchase. Payday resolves to the chosen day clamped to the last day of each candidate month. The installment default keeps the payday as its monthly anchor, or today's day when payday is unset. Selecting a custom first due date uses its day as the anchor. Save the resolved dates and anchor on the purchase so changing someone's payday only changes defaults for new entries.
 
 ### Person page
 
 - Show **Due by today**, **Left to pay**, **Payments received**, **Cash returned**, and any positive **Credit**. Itemize any cash shortfall under Left to pay.
-- Offer **Record a payment** as the primary action. Offer **Add purchase** for active people and **Record cash returned** when there is credit.
+- Offer **Record a payment** as the primary action. Offer **Add purchase** for active people and **Record cash returned** when there is credit. **Edit person** changes the name and payday; payday changes affect only defaults for new purchases.
 - Purchases appear newest first. Each card shows the item, original total, refunds, plan, progress, amount left and earliest unpaid dated amount. **Show dates** includes both schedules. The card offers Edit, Delete and Record shop refund where applicable.
-- Show incoming payments and payouts in dated history. Offer Edit and Delete on payments.
-- **Archive person** explains any outstanding balance before confirmation and preserves their records. The archive allows payments, shop refunds, and payouts. Restore the person before moving or adding a purchase to their ledger.
+- Show incoming payments and payouts in dated history, newest first. Offer Edit and Delete on both.
+- **Archive person** explains any outstanding balance before confirmation and preserves their records. The archive allows payments, shop refunds, and payouts. Restore the person before moving or adding a purchase to their ledger. People are archived, never deleted, except a person with no records.
 
 ### Record a payment
 
-- Quick chips fill the amount with **Due by today**, **Next installment amount** (the remaining amount on the earliest unpaid installment due after today) or **Everything** (all left to pay). Show chips for valid positive payment amounts and use **Due by today** as the default when available. Each chip sets the payment amount and uses the usual allocation order.
+- Quick chips fill the amount with **Due by today**, **Next due amount** (the remaining amount on the earliest unpaid dated amount due after today) or **Everything** (all left to pay). Show chips for valid positive payment amounts and use **Due by today** as the default when available. Each chip sets the payment amount and uses the usual allocation order.
 - Date (today) and optional note ("cash", "bank transfer").
 - Hint — "Payments cover dated amounts first, starting with the earliest due. Any extra becomes credit."
 
@@ -223,7 +233,7 @@ Purchase date defaults to today. Who, what and price are required. Date shortcut
 - Open the existing purchase or payment in its form to edit it. Keep its ID and recompute balances for everyone affected when the edit is saved.
 - Record a shop refund from its purchase with an amount, date and optional note. Show refunds in purchase history and offer correction or removal there. Block changes that would leave refunds above the purchase total or before the purchase date. Review and remove linked shop refunds before deleting the purchase.
 - Record cash returned from the person's page with an amount, date and optional note. Show the available credit before saving. Allow corrections to payout records and check available credit against any increase. Recording the shop refund and recording the cash payout are separate actions.
-- Delete eligible purchases and payments in one tap. Apply the deletion locally and hold the queued operation for seven seconds. **Undo** cancels it and restores the records with their original IDs. After a reload, offer Undo for the time remaining on the saved deadline.
+- Delete payments, payouts, and purchases without shop refunds in one tap. Apply the deletion locally and hold the queued operation for seven seconds. **Undo** cancels it and restores the records with their original IDs. After a reload, offer Undo for the time remaining on the saved deadline.
 
 ### Visual language
 
@@ -270,7 +280,7 @@ Purchase date defaults to today. Who, what and price are required. Date shortcut
 
 ### Parsing amounts
 
-Purchase, payment, refund and payout fields use the same rules. Trim surrounding whitespace and accept positive values using digits, `.` and `,`. When both separators appear, the rightmost is decimal and the other must form valid thousands groups. A repeated separator must form valid thousands groups. For a single separator, prefer decimal when the fraction fits within two digits. Otherwise accept it as a thousands separator if the grouping is valid. A valid grouping starts with one to three digits followed by groups of exactly three. Reject malformed values and excess fractional digits. Convert the digits directly to integer kuruş. Show the interpreted TRY amount before Save.
+Purchase, payment, refund and payout fields use the same rules. Trim surrounding whitespace and accept positive values using digits, `.` and `,`, with at least one digit before any decimal separator. When both separators appear, the rightmost is decimal and the other must form valid thousands groups. A repeated separator must form valid thousands groups. For a single separator, prefer decimal when the fraction fits within two digits. Otherwise accept it as a thousands separator if the grouping is valid. A valid grouping starts with one to three digits followed by groups of exactly three. Reject malformed values and excess fractional digits. Convert the digits directly to integer kuruş. Show the interpreted TRY amount before Save.
 
 ### Ledger cases
 
@@ -288,6 +298,9 @@ Purchase, payment, refund and payout fields use the same rules. Trim surrounding
 | Person archived while they still owe money | Keep their balance in Home totals and show it in the archive subtotal |
 | `1.500` in a TRY ledger | Parsed as 1,500 TL and shown in the ledger's currency format |
 | `12,50.00` in a TRY ledger | Rejected because the thousands group has two digits |
+| `1,5` or `1.5` | Parsed as 1.50 TL |
+| `0`, `,50` or `1.234,567` | Rejected as zero, missing an integer digit, or too many fractional digits |
+| Installment purchase with a custom first due date | The date's day becomes `dueDay` for the remaining installments |
 
 ## 9. Later release design
 
