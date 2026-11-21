@@ -23,6 +23,7 @@ Goals:
 3. For each person the app always answers "how much do they owe me in total?" and "how much of that is due by today?"
 4. Payments of any size work without having to tie them to a specific purchase.
 5. Works on a phone, which is where purchases happen.
+6. After initial sign-in and download, the buyer can use the ledger offline. Changes sync to the server when a connection returns, and the buyer can open the same ledger on another device.
 
 Non-goals (v1):
 
@@ -161,6 +162,7 @@ flowchart TD
 - Two figures show **Due by today** and **Due in the next month**.
 - One row per person shows their name, amount left and a status chip. In order, show credit if positive, "All paid" if nothing is left, the amount due by today if positive, the earliest unpaid future date if any, or "When they can". Include "Behind plan" in the chip when the person meets that rule.
 - **Coming up** shows the person, item, date and remaining amount for each entry in the upcoming list.
+- Show sync status when changes are pending, the app is offline, or the buyer needs to sign in or resolve a conflict. Locally saved changes appear in balances immediately.
 - A floating **+ Add purchase** button, always reachable with the thumb.
 
 ### Add purchase (the most important flow)
@@ -194,8 +196,8 @@ Purchase date defaults to today. Who, what and price are required. Date shortcut
 
 ### Removing things
 
-- Delete is a single tap on purchases and payments. Each successful deletion offers **Undo** for seven seconds in the current session. Balances update immediately after the deletion commits.
-- Removing a whole person asks for confirmation. Delete the person, purchases and payments together in one transaction. Undo restores the same records and IDs in one transaction. An undo of a single purchase or payment requires its person to exist. Clear pending undo actions when a backup replaces the ledger.
+- Delete is a single tap on purchases and payments. Apply the deletion locally and hold its queued operation for seven seconds. **Undo** cancels the operation and restores the records with their original IDs. After a reload, offer Undo for the time remaining on the saved deadline.
+- Removing a whole person asks for confirmation. Remove the person, purchases and payments together in one transaction on each side. Undo of a single purchase or payment requires its person to exist.
 - Editing a purchase in v1 means delete and re-add. A real edit form comes in v2.
 
 ### Visual language
@@ -206,21 +208,29 @@ Purchase date defaults to today. Who, what and price are required. Date shortcut
 
 ## 7. Platform and technical approach
 
-| Option | Pros | Cons |
-| --- | --- | --- |
-| **A. PWA, local-first (recommended)** | One codebase, installs on the phone home screen, works offline, no server cost, data stays private | Sync between devices needs extra work; browser storage can be cleared |
-| B. PWA + small backend (e.g. SQLite + API, or a hosted DB) | Multi-device sync, view-only family links, backups | Hosting, auth, more to maintain |
-| C. Native mobile app | Best feel, notifications | Two platforms or a framework; store publishing; most effort |
-| D. Spreadsheet with formulas | Zero build | Adding is slow on a phone, oldest-first allocation is awkward, easy to break |
+### PWA and server
 
-Start with **A** for v1. The balance module and ledger records can be reused if a backend is added later.
+- Serve the installable PWA and an authenticated ledger API over HTTPS from the same origin. Use one buyer account per ledger. The server authorizes every read and write against that account and stores the synced ledger in SQLite on persistent storage.
+- Initial sign-in and download require a connection. A service worker caches the app shell. IndexedDB stores the last synced ledger and a queue of pending operations, scoped to the signed-in buyer. Once set up, the buyer can reopen the app, read balances, add records and delete or undo while offline.
+- Balance logic lives in a pure, framework-free module that takes the records and an explicit `today` date. The app computes balances from the last synced records plus pending local changes. The server stores records and sync metadata. It validates writes before committing them.
+- Keep pending changes when authentication expires and ask the buyer to sign back in for sync. Signing out clears the device's local ledger. If changes are pending, offer to sync first or ask the buyer to confirm discarding them.
 
-- Frontend: a lightweight framework (Svelte or React) with a mobile-first layout.
-- Storage: IndexedDB through a thin repository layer (`people`, `purchases`, `payments`, `settings`).
-- Cache the app shell after the first successful load so the buyer can reopen it offline. Keep ledger data in IndexedDB. Clearing site data can erase the ledger, so offer export from Settings.
-- Balance logic lives in a pure, framework-free module that takes the records and an explicit `today` date. Test scheduling, allocation and date boundaries with fixed dates. Test amount parsing and backup validation separately.
-- **Backup** exports versioned JSON with the ledger currency, people, purchases and payments. Import validates the version, currency, unique IDs, references and record values before showing what will be replaced and asking for confirmation. Replace the ledger in one transaction. Validation or write failures leave the existing ledger intact.
-- **Later sync** can reuse the three collections and client-generated IDs. Conflict handling for simultaneous changes and deletes belongs to the sync design.
+### Sync
+
+1. Persist each operation in IndexedDB before showing its effect. Generate stable IDs for records and operations on the client. Sync when the app is open after a local change, at startup, on returning to the foreground, and when the connection returns. Allow one sync cycle at a time across tabs on the same device.
+2. Send operations in queue order and wait if the first remaining operation is an undoable deletion. Include the ledger generation each operation was created against. The server checks the generation, applies the operation and records its ID and result in one transaction. For an already committed ID, return the prior result even after a restore. A lost response and retry cannot record the payment twice.
+3. Fetch a current full ledger snapshot with its generation, revision and per-record versions. Use the operation ID as the new version of each record it changes so later queued operations can refer to earlier ones. An update or deletion includes the version it was based on. Creating a purchase or payment requires its person to still exist. Deleting a person checks that the person, list of children and their versions still match what the buyer saw at confirmation.
+4. If a precondition fails, stop at that operation and keep it and later changes on the device. Show the relevant server state and let the buyer discard the conflicting operation or confirm a revised action with a new operation ID. Recheck dependent operations after a resolution. Save the latest snapshot and remove acknowledged operations in one local transaction, then replay the remaining queue to rebuild the local view.
+
+### Backup and restore
+
+- **Export** a versioned JSON file with the currency, people, purchases and payments. Export includes the current local ledger, including pending changes, and works offline. Back up the server database separately for recovery after server data loss.
+- **Restore** requires a connection and an empty local queue. Validate the backup, preview what will be replaced, and ask for confirmation. Use an operation ID for safe retries and replace the server ledger in one transaction only if its revision still matches the preview. After a successful restore, refresh the local copy from the server. Validation or write failures leave the ledger intact.
+- Give the restored ledger a new generation. Operations from another device that were queued against the previous generation are held for the buyer to review against the restored ledger.
+
+### Verification
+
+- Test scheduling, allocation, amount parsing and backup validation. Exercise the PWA after an online setup with the network disabled, then reload and reconnect. Check that a retried payment is recorded once, undo works after a reload, another device sees synced changes, and a concurrent deletion or backup restore preserves conflicting local changes for review.
 
 ## 8. Edge cases
 
@@ -255,7 +265,7 @@ Purchase and payment fields use the same rules. Trim surrounding whitespace and 
 
 | Phase | Scope |
 | --- | --- |
-| v1 – MVP | People, purchases (once / installments), payments, oldest-first balances, home and person pages, delete + undo, JSON backup, PWA install |
+| v1 – MVP | People, purchases (once / installments), payments, oldest-first balances, home and person pages, delete + undo, installable offline PWA, buyer sign-in, server sync across devices, JSON backup |
 | v2 | Edit purchases, split purchases between people, target payments to a purchase, search and filter, archive settled purchases |
-| v3 | Sync across devices, view-only family links, shareable "what you owe" summary, optional monthly reminder |
+| v3 | View-only family links, shareable "what you owe" summary, optional monthly reminder |
 | Later | Attach the order screenshot or receipt, import from shop order emails, statistics (spending per person per month) |
