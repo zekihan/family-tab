@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures";
 import {
-  apiHeader, cash, figure, homeHeading, money, openLedger, person, purchase,
+  apiHeader, cash, figure, homeHeading, money, openLedger, person, purchase, seedPerson,
   sessionCookie, setup, signIn, snapshot, synced,
 } from "./ledger";
 
@@ -109,4 +109,22 @@ test("devices on different calendar dates agree on the ledger's midnight boundar
     expect(await device.page.evaluate(() => new Intl.DateTimeFormat("sv-SE").format(Date.now()))).toBe(localDate);
     await figure(device.page, "Due by today", 10_000);
   }
+});
+
+test("an impossible date stays visible and blocks Save after leaving the field", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  await page.getByRole("button", { name: "Record a payment", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Record a payment" });
+  await dialog.getByLabel("Amount", { exact: true }).fill("25");
+  const date = dialog.getByLabel("Date", { exact: true });
+  await date.click();
+  await date.press("ControlOrMeta+a");
+  await date.pressSequentially("31.02.2026");
+  await dialog.getByLabel("Note (optional)").click();
+  await expect(date).toHaveValue("31.02.2026");
+  await expect(date).toHaveAttribute("aria-invalid", "true");
+  await expect(dialog.getByText("Enter the date as day.month.year.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toBeVisible();
+  expect((await snapshot(page)).payments).toHaveLength(0);
 });

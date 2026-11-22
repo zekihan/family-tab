@@ -119,10 +119,15 @@ export function DateField({ label, value, onChange, min, max }: {
   const hint = `${id}-hint`;
   const input = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(() => dateInputText(value));
-  const [editing, setEditing] = useState(false);
+  // The last date this field and its parent agreed on. Only an outside change
+  // to the value replaces the text, so an invalid entry stays visible and
+  // keeps blocking Save instead of reverting to the previous date.
+  const synced = useRef(value);
   useEffect(() => {
-    if (!editing) setText(dateInputText(value));
-  }, [value, editing]);
+    if (value === synced.current) return;
+    synced.current = value;
+    setText(dateInputText(value));
+  }, [value]);
   const parsed = parseDateInput(text);
   const error = !text ? "Enter a date." : !parsed ? "Enter the date as day.month.year."
     : min && parsed < min ? `Choose ${displayDate(min)} or later.`
@@ -134,15 +139,16 @@ export function DateField({ label, value, onChange, min, max }: {
     <div className="date-input">
       <input ref={input} id={id} required className="num" inputMode="numeric" autoComplete="off" placeholder="DD.MM.YYYY"
         value={text} aria-describedby={hint} aria-invalid={!!text && !!error}
-        onFocus={() => setEditing(true)}
         onBlur={() => {
-          setEditing(false);
           if (parsed) setText(dateInputText(parsed));
         }}
         onChange={event => {
           setText(event.target.value);
           const next = parseDateInput(event.target.value);
-          if (next) onChange(next);
+          if (next) {
+            synced.current = next;
+            onChange(next);
+          }
         }} />
       <span className="date-picker" aria-hidden="true">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
