@@ -195,7 +195,7 @@ function ReviewCard({ item }: { item: ReviewItem }) {
       </li>)}</ul>
     </section>}
     <div className="actions">
-      {actions.keepServer && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepServer(op.id))}>Keep server</button>}
+      {actions.keepServer && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepServer(op.id, item))}>Keep server</button>}
       {actions.keep && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepLocal(op.id, item))}>{item.restore ? "Apply to restored ledger" : "Keep mine"}</button>}
       {actions.edit && <button className="button secondary" disabled={busy} onClick={() => setEditor(item)}>Edit and resubmit</button>}
       {!actions.edit && !actions.keep && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepLocal(op.id, item))}>Retry deletion</button>}
