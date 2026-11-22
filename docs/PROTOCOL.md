@@ -241,7 +241,7 @@ Where DESIGN.md leaves a detail open, both implementations and the fixtures foll
 
 Codes: a missing reference is `not_found`, a repeated ID is `duplicate_id` (IDs are unique across all record types), refunds above the price are `refunds_exceed_total`, and every other record rule is `invalid`.
 
-- Dates must be real calendar dates in `YYYY-MM-DD` form. Settings `timeZone` must load as an IANA zone and must not be `""`, `Local` or `UTC`-aliases other than the literal names `UTC` and `Etc/UTC`.
+- Dates must be real calendar dates in `YYYY-MM-DD` form. Settings `timeZone` must be a name that loads from the IANA database (`UTC` included); `""` and `Local` are invalid.
 - Names and items are non-empty after trimming. Notes, when non-null, are at most 500 characters; names and items at most 200.
 - Amounts and `totalMinor` are integers from 1 through 10,000,000,000.
 - `boughtOn`, `paidOn`, `refundedOn` and `paidOutOn` are ≤ today. `dueDate` and `firstDue` are ≥ `boughtOn`. A refund's `refundedOn` is ≥ its purchase's `boughtOn`.
