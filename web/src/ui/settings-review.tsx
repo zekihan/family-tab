@@ -115,10 +115,11 @@ export function SettingsPage() {
 
 function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void }) {
   const { store, snapshot } = useLedgerUI();
+  const [reviewed, setReviewed] = useState(item);
   const { op } = item;
   if (op.kind === "delete") return null;
-  const server = item.server;
-  const original = server ?? item.local;
+  const server = reviewed.server;
+  const original = item.server ?? item.local;
   const initial: Record<string, unknown> = { ...original, ...(op.kind === "update" ? op.patch : op.record) };
   const base = { id: op.recordId, version: original?.version ?? "" };
   const text = (key: string) => typeof initial[key] === "string" ? initial[key] : null;
@@ -127,19 +128,24 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
     const value = text(key);
     return value && isValidDate(value) ? value : null;
   };
+  const commit = (fields: Record<string, unknown>): Promise<SaveResult> => {
+    const patch = server && item.server ? patchBetween({ ...item.server }, fields) : fields;
+    return store.editAndResubmit(op.id, patch, reviewed);
+  };
+  const target = {
+    commit, onSaved,
+    onReviewReapply: (current: LedgerRecord, generation: string) =>
+      setReviewed(previous => ({ ...previous, server: current, generation })),
+  };
+  if (op.recordType === "settings") return <ZoneForm {...target} initial={{
+    ...base, id: SETTINGS_ID, timeZone: text("timeZone") ?? "", currency: "TRY",
+  }} />;
+
   const today = snapshot.ledger!.today;
   const personId = text("personId") ?? "";
   const purchaseId = text("purchaseId") ?? "";
   const cash = { ...base, amountMinor: integer("amountMinor") ?? 0, note: text("note") };
-  const commit = (fields: Record<string, unknown>): Promise<SaveResult> => {
-    const patch = server ? patchBetween({ ...server }, fields) : fields;
-    return store.editAndResubmit(op.id, patch, item);
-  };
-  const target = { commit, onSaved };
   switch (op.recordType) {
-    case "settings": return <ZoneForm {...target} initial={{
-      ...base, id: SETTINGS_ID, timeZone: text("timeZone") ?? "", currency: "TRY",
-    }} />;
     case "person": return <PersonForm {...target} initial={{
       ...base, name: text("name") ?? "", payday: integer("payday"), archived: initial.archived === true,
     }} />;
@@ -155,12 +161,13 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
       originalDate={server && "paidOutOn" in server ? server.paidOutOn : null}
       initial={{ ...cash, personId, paidOutOn: date("paidOutOn") ?? today }} />;
     case "refund": return <CashForm {...target} type="refund" purchaseId={purchaseId}
+      fixedPurchaseId={server && "purchaseId" in server ? server.purchaseId : undefined}
       originalDate={server && "refundedOn" in server ? server.refundedOn : null}
       initial={{ ...cash, purchaseId, refundedOn: date("refundedOn") ?? today }} />;
   }
 }
 
-function ReviewCard({ item }: { item: ReviewItem }) {
+export function ReviewCard({ item }: { item: ReviewItem }) {
   const { snapshot, store, notify } = useLedgerUI();
   const [editor, setEditor] = useState<ReviewItem | null>(null);
   const [confirmer, setConfirmer] = useState<ReviewItem | null>(null);

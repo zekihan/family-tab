@@ -6,7 +6,7 @@ import type { LedgerRecord, Payment, Payout, Person, Purchase, RecordType, Refun
 import { Figure, personURL, RecordSummary, SaveForm, Sheet, useLedgerUI, useSave } from "./components.tsx";
 import { displayDate, recordLabels, recordName, statusText } from "./presentation.ts";
 
-export function SyncBanner() {
+export function SyncBanner({ showReviewLink = true }: { showReviewLink?: boolean }) {
   const { snapshot, store } = useLedgerUI();
   const sync = snapshot.sync;
   if (!(sync.pendingCount || sync.offline || sync.needsSignIn || sync.needsReview || sync.restoreInProgress || sync.lastError)) return null;
@@ -21,7 +21,7 @@ export function SyncBanner() {
     </div>
     <div className="actions">
       {sync.needsSignIn && !sync.offline && <a className="button secondary small" href={loginURL}>Sign in with SSO</a>}
-      {sync.needsReview && <a className="button secondary small" href="#/review">Review changes</a>}
+      {sync.needsReview && showReviewLink && <a className="button secondary small" href="#/review">Review changes</a>}
       <button className="button secondary small" disabled={sync.syncing || sync.offline || sync.needsSignIn || sync.restoreInProgress}
         onClick={() => void store.syncNow()}>{sync.syncing ? "Syncing…" : "Sync now"}</button>
     </div>

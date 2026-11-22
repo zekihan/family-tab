@@ -66,12 +66,16 @@ export function todayIn(timeZone: string, nowMs = Date.now()): DateString {
   return `${get("year").padStart(4, "0")}-${get("month")}-${get("day")}`;
 }
 
-export function isValidTimeZone(timeZone: string): boolean {
-  if (typeof timeZone !== "string" || !timeZone || timeZone === "Local" || /^[+-]/.test(timeZone)) return false;
+export function canonicalTimeZone(timeZone: string): string | null {
+  if (typeof timeZone !== "string" || !timeZone || timeZone === "Local" || /^[+-]/.test(timeZone)) return null;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone });
-    return true;
+    return new Intl.DateTimeFormat("en-US", { timeZone }).resolvedOptions().timeZone;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function isValidTimeZone(timeZone: string): boolean {
+  const canonical = canonicalTimeZone(timeZone);
+  return canonical !== null && canonical === timeZone;
 }

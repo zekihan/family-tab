@@ -1,8 +1,59 @@
 import { test, expect } from "./fixtures";
+import type { Page } from "@playwright/test";
 import {
-  cash, figure, goOffline, homeHeading, openLedger, person, purchase, review, seedPerson,
-  settings, snapshot, synced, syncStatus,
+  cash, figure, goOffline, homeHeading, openLedger, person, purchase, review, save, seedPerson,
+  settings, setup, signIn, snapshot, synced, syncStatus,
 } from "./ledger";
+
+test("setup and settings save time zones with IANA casing", async ({ app, page }) => {
+  await setup(page, app.url, "europe/istanbul");
+  expect((await snapshot(page)).settings?.timeZone).toBe("Europe/Istanbul");
+  await settings(page);
+  await page.getByRole("button", { name: "Change time zone" }).click();
+  const dialog = page.getByRole("dialog", { name: "Ledger time zone" });
+  await dialog.getByLabel("Ledger time zone").fill("america/new_york");
+  await save(dialog);
+  await synced(page);
+  expect((await snapshot(page)).settings?.timeZone).toBe("America/New_York");
+});
+
+test("rejected setup can be edited and discarded from the setup screen", async ({ app, page }) => {
+  await page.goto(app.url);
+  await signIn(page);
+  const attempts: { id: string; timeZone: string }[] = [];
+  await page.route("**/api/sync/ops", async route => {
+    const body = route.request().postDataJSON();
+    const { op } = body.items[0];
+    attempts.push({ id: op.id, timeZone: op.record.timeZone });
+    if (attempts.length <= 2) {
+      op.record.timeZone = "Bogus/City";
+      await route.continue({ postData: JSON.stringify(body) });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.getByLabel("Ledger time zone").fill("UTC");
+  await page.getByRole("button", { name: "Confirm time zone" }).click();
+  const item = page.getByRole("article").filter({ hasText: "unknown time zone Bogus/City" });
+  await expect(item).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm time zone" })).toBeHidden();
+
+  await item.getByRole("button", { name: "Edit and resubmit" }).click();
+  const editor = page.getByRole("dialog");
+  await expect(editor.getByLabel("Ledger time zone")).toHaveValue("UTC");
+  await editor.getByLabel("Ledger time zone").fill("Europe/Istanbul");
+  await editor.getByRole("button", { name: "Resubmit", exact: true }).click();
+  await expect(item).toContainText("Europe/Istanbul");
+  expect(attempts.map(attempt => attempt.timeZone)).toEqual(["UTC", "Europe/Istanbul"]);
+  expect(attempts[0].id).not.toBe(attempts[1].id);
+  await expect(syncStatus(page)).toContainText("1 change pending");
+  await item.getByRole("button", { name: "Discard" }).click();
+
+  await page.getByLabel("Ledger time zone").fill("Europe/Istanbul");
+  await page.getByRole("button", { name: "Confirm time zone" }).click();
+  await synced(page);
+  expect((await snapshot(page)).settings?.timeZone).toBe("Europe/Istanbul");
+});
 
 test("a payment committed before a network failure is recorded exactly once", async ({ app, page }) => {
   await seedPerson(page, app.url);
@@ -147,6 +198,125 @@ for (const choice of ["Keep mine", "Keep server"]) {
     await figure(other.page, "Payments received", expected);
   });
 }
+
+test("refund conflict resubmission keeps the original purchase read-only", async ({ app, page, newDevice }) => {
+  await seedPerson(page, app.url);
+  await purchase(page, { item: "Shoes", price: "60" });
+  const towels = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Kitchen towels" }) });
+  await towels.getByRole("button", { name: "Record shop refund" }).click();
+  const create = page.getByRole("dialog", { name: "Record shop refund" });
+  await create.getByLabel("Amount", { exact: true }).fill("10");
+  await save(create);
+  await synced(page);
+  const original = (await snapshot(page)).refunds[0];
+  const other = await newDevice();
+  await openLedger(other.page, app.url);
+  await person(other.page);
+
+  async function editRefund(device: Page, amount: string) {
+    await device.getByRole("button", { name: "Edit shop refund for Kitchen towels" }).click();
+    const editor = device.getByRole("dialog", { name: "Edit shop refund" });
+    await editor.getByLabel("Amount", { exact: true }).fill(amount);
+    await save(editor);
+  }
+
+  await goOffline(other.page);
+  await editRefund(other.page, "15");
+  await editRefund(page, "20");
+  await synced(page);
+  await other.context.setOffline(false);
+  const item = await review(other.page, "Edit shop refund");
+  await item.getByRole("button", { name: "Edit and resubmit" }).click();
+  const editor = other.page.getByRole("dialog", { name: "Resubmit shop refund" });
+  const purchaseField = editor.getByRole("combobox", { name: "Purchase", exact: true });
+  await expect(purchaseField).toHaveValue(original.purchaseId);
+  await expect(purchaseField).toBeDisabled();
+  await editor.getByRole("button", { name: "Resubmit", exact: true }).click();
+  await synced(other.page);
+  expect((await snapshot(other.page)).refunds).toMatchObject([
+    { id: original.id, purchaseId: original.purchaseId, amountMinor: 1_500 },
+  ]);
+});
+
+test("reapplying in a review editor resubmits against the displayed version", async ({ app, page, newDevice }) => {
+  await seedPerson(page, app.url);
+  await cash(page, "25");
+  await synced(page);
+  const other = await newDevice();
+  await openLedger(other.page, app.url);
+  await person(other.page);
+
+  await goOffline(other.page);
+  await cash(other.page, "45", { fromMinor: 2_500 });
+  await cash(page, "30", { fromMinor: 2_500 });
+  await synced(page);
+  await other.context.setOffline(false);
+  const item = await review(other.page, "Edit payment");
+  await item.getByRole("button", { name: "Edit and resubmit" }).click();
+  const editor = other.page.getByRole("dialog", { name: "Resubmit payment" });
+  await editor.getByLabel("Note (optional)").fill("Keep this draft");
+  const submit = editor.getByRole("button", { name: "Resubmit", exact: true });
+
+  await cash(page, "35", { fromMinor: 3_000, date: "2025-01-15" });
+  await synced(page);
+  const latest = (await snapshot(page)).payments[0];
+  await other.page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(item).toContainText("35 TL");
+  await submit.click();
+  const notice = editor.getByRole("alert");
+  await expect(notice).toContainText("35 TL");
+  await notice.getByRole("button", { name: "Reapply my changes" }).click();
+  await expect(editor.getByLabel("Note (optional)")).toHaveValue("Keep this draft");
+  const [resubmit] = await Promise.all([
+    other.page.waitForRequest(request => request.url().endsWith("/api/sync/ops")),
+    submit.click().then(() => expect(editor).toBeHidden()),
+  ]);
+  expect(resubmit.postDataJSON().items[0].op.baseVersion).toBe(latest.version);
+  await synced(other.page);
+  expect((await snapshot(other.page)).payments).toMatchObject([
+    { id: latest.id, amountMinor: 4_500, note: "Keep this draft", paidOn: latest.paidOn },
+  ]);
+});
+
+test("restore review prefills an offline payment edit when the backup lacks that payment", async ({
+  app, page, newDevice,
+}) => {
+  await seedPerson(page, app.url);
+  await settings(page);
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export backup" }).click();
+  const backup = await (await download).path();
+  await page.getByRole("link", { name: "Family Tab", exact: true }).click();
+  await person(page);
+  await cash(page, "25", { date: "2025-01-15", note: "Bank transfer" });
+  await synced(page);
+  const original = (await snapshot(page)).payments[0];
+  const other = await newDevice();
+  await openLedger(other.page, app.url);
+  await person(other.page);
+  await goOffline(other.page);
+  await cash(other.page, "45", { fromMinor: 2_500 });
+
+  await settings(page);
+  await page.getByLabel("Choose backup file").setInputFiles(backup);
+  const confirmation = page.getByRole("dialog", { name: "Restore backup" });
+  await confirmation.getByRole("button", { name: "Replace ledger" }).click();
+  await expect(confirmation).toBeHidden();
+  expect((await snapshot(page)).payments).toEqual([]);
+  await other.context.setOffline(false);
+  const item = await review(other.page, "Edit payment");
+  await item.getByRole("button", { name: "Edit and resubmit" }).click();
+  const editor = other.page.getByRole("dialog", { name: "Resubmit payment" });
+  await expect(editor.getByLabel("Who")).toHaveValue(original.personId);
+  await expect(editor.getByLabel("Note (optional)")).toHaveValue(original.note!);
+  await expect(editor.getByLabel("Date", { exact: true })).toHaveValue("15.01.2025");
+  await editor.getByRole("button", { name: "Resubmit", exact: true }).click();
+  await synced(other.page);
+  const { version, ...fields } = original;
+  const [restored] = (await snapshot(other.page)).payments;
+  expect(restored).toMatchObject({ ...fields, amountMinor: 4_500 });
+  expect(restored.version).not.toBe(version);
+});
 
 test("a cash payout above the remaining credit is held and can be confirmed as already returned", async ({
   app, page, newDevice,

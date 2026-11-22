@@ -41,6 +41,12 @@ test("settings must use TRY and an IANA time zone, and only the time zone can be
   assert.equal(validateChange(before, ledger({ settings: null }), { ...update, kind: "delete" }, today)?.code, "invalid");
 });
 
+test("ledger time zones require IANA casing", () => {
+  assert.equal(isValidTimeZone("Europe/Istanbul"), true);
+  assert.equal(isValidTimeZone("europe/istanbul"), false);
+  assert.equal(isValidTimeZone("utc"), false);
+});
+
 test("record limits apply in a restore, including Unicode character counts", () => {
   const personAtLimit = { ...person, name: "ş".repeat(200), payday: 31 };
   const purchaseAtLimit = { ...purchase, item: "🧺".repeat(200), note: "🧺".repeat(500), totalMinor: 10_000_000_000 };

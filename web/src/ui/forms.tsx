@@ -1,10 +1,10 @@
 import { useId, useRef, useState } from "react";
 import type { EditToken, SaveResult } from "../data/index.ts";
 import {
-  defaultInstallmentStart, dueShortcuts, formatAmountInput, formatTRY, installmentPreview,
-  isValidTimeZone, lastDayOfMonth, MAX_AMOUNT_MINOR, parseAmount, paymentChips,
+  canonicalTimeZone, defaultInstallmentStart, dueShortcuts, formatAmountInput, formatTRY, installmentPreview,
+  lastDayOfMonth, MAX_AMOUNT_MINOR, parseAmount, paymentChips,
 } from "../ledger/index.ts";
-import type { Payment, Payout, Plan, RecordByType, RecordType, Refund } from "../types.ts";
+import type { LedgerRecord, Payment, Payout, Plan, RecordByType, RecordType, Refund } from "../types.ts";
 import { AmountField, Chip, DateField, SaveForm, useLedgerUI, useSave } from "./components.tsx";
 import type { Commit } from "./components.tsx";
 import { displayDate, eventDateMax, patchBetween, paymentLabels, purchaseDate } from "./presentation.ts";
@@ -15,25 +15,33 @@ type FormTarget<T extends RecordType> = {
   initial?: RecordByType[T];
   token?: EditToken;
   commit?: Commit<Fields<T>>;
+  onReviewReapply?: (current: LedgerRecord, generation: string) => void;
   onSaved: (result: Saved) => void;
 };
 type DatedFormTarget<T extends RecordType> = FormTarget<T> & { originalDate?: string | null };
 
-function useRecordForm<T extends Exclude<RecordType, "settings">>(type: T, target: FormTarget<T>) {
-  const { store } = useLedgerUI();
+function useFormSave(target: Pick<FormTarget<RecordType>, "token" | "onSaved" | "onReviewReapply">) {
   const [token, setToken] = useState(target.token);
   const save = useSave(target.onSaved);
   function onReapply() {
     if (!save.stale?.current) return;
-    setToken({ generation: save.stale.generation, version: save.stale.current.version });
+    const { current, generation } = save.stale;
+    if (target.onReviewReapply) target.onReviewReapply(current, generation);
+    else setToken({ generation, version: current.version });
     save.setStale(null);
   }
+  return { ...save, token, onReapply };
+}
+
+function useRecordForm<T extends Exclude<RecordType, "settings">>(type: T, target: FormTarget<T>) {
+  const { store } = useLedgerUI();
+  const save = useFormSave(target);
   function commit(fields: Fields<T>) {
     if (target.commit) return target.commit(fields);
-    if (target.initial && token) return store.updateRecord(type, target.initial.id, token, patchBetween(target.initial, fields));
+    if (target.initial && save.token) return store.updateRecord(type, target.initial.id, save.token, patchBetween(target.initial, fields));
     return store.createRecord(type, fields);
   }
-  return { ...save, commit, persist: (fields: Fields<T>) => void save.submit(() => commit(fields)), onReapply };
+  return { ...save, commit, persist: (fields: Fields<T>) => void save.submit(() => commit(fields)) };
 }
 
 const installmentCounts = [2, 3, 4, 6, 9, 12];
@@ -220,14 +228,17 @@ export function PersonForm(target: FormTarget<"person">) {
 type CashTarget =
   | ({ type: "payment"; personId: string } & DatedFormTarget<"payment">)
   | ({ type: "payout"; personId: string } & DatedFormTarget<"payout">)
-  | ({ type: "refund"; purchaseId: string } & DatedFormTarget<"refund">);
+  | ({ type: "refund"; purchaseId: string; fixedPurchaseId?: string } & DatedFormTarget<"refund">);
 
 export function CashForm(target: CashTarget) {
   const { snapshot, store } = useLedgerUI();
   const today = snapshot.ledger!.today;
   const initial: Payment | Payout | Refund | undefined = target.initial;
   const [personId, setPerson] = useState("personId" in target ? target.personId : "");
-  const [purchaseId, setPurchase] = useState("purchaseId" in target ? target.purchaseId : "");
+  const [chosenPurchaseId, setPurchase] = useState("purchaseId" in target ? target.purchaseId : "");
+  const fixedPurchaseId = target.type === "refund"
+    ? target.fixedPurchaseId ?? (target.token ? target.initial?.purchaseId : undefined) : undefined;
+  const purchaseId = fixedPurchaseId ?? chosenPurchaseId;
   const purchase = snapshot.records.purchases.find(row => row.id === purchaseId);
   const person = snapshot.records.people.find(row => row.id === personId);
   const chips = target.type === "payment" && !initial && person
@@ -237,8 +248,8 @@ export function CashForm(target: CashTarget) {
   const originalDate = target.originalDate === undefined ? initialDate : target.originalDate;
   const [date, setDate] = useState(initialDate ?? today);
   const [note, setNote] = useState(initial?.note ?? "");
-  const [token, setToken] = useState(target.token);
-  const save = useSave(target.onSaved);
+  const save = useFormSave(target);
+  const { token } = save;
   const amountValue = parseAmount(amount);
   const undoBlocked = target.type === "payout" && !initial && !store.canRecordCashReturned(personId);
   const credit = snapshot.ledger!.balances[personId]?.credit ?? 0;
@@ -271,14 +282,10 @@ export function CashForm(target: CashTarget) {
     });
   }
 
-  return <SaveForm {...save} onSave={persist} blocked={undoBlocked} label={target.commit ? "Resubmit" : "Save"} onReapply={() => {
-    if (!save.stale?.current) return;
-    setToken({ generation: save.stale.generation, version: save.stale.current.version });
-    save.setStale(null);
-  }}>
+  return <SaveForm {...save} onSave={persist} blocked={undoBlocked} label={target.commit ? "Resubmit" : "Save"}>
     {target.type === "refund" ? <>
       {target.commit ? <label className="field">Purchase
-        <select required value={purchaseId} onChange={event => setPurchase(event.target.value)}>
+        <select required disabled={fixedPurchaseId !== undefined} value={purchaseId} onChange={event => setPurchase(event.target.value)}>
           <option value="">Choose a purchase</option>
           {snapshot.records.purchases.map(row => <option key={row.id} value={row.id}>{row.item} · {snapshot.records.people.find(person => person.id === row.personId)?.name}</option>)}
         </select>
@@ -309,16 +316,17 @@ export function CashForm(target: CashTarget) {
   </SaveForm>;
 }
 
-export function ZoneForm({ initial, token: opened, commit, onSaved }: FormTarget<"settings">) {
+export function ZoneForm(target: FormTarget<"settings">) {
   const { store, snapshot } = useLedgerUI();
+  const { initial, commit } = target;
   const [zone, setZone] = useState(initial?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC");
-  const [token, setToken] = useState(opened);
-  const save = useSave(onSaved);
+  const save = useFormSave(target);
+  const { token } = save;
   const zoneId = useId();
   const zonesId = `${zoneId}-options`;
   function persist() {
-    const timeZone = zone.trim();
-    if (!isValidTimeZone(timeZone)) {
+    const timeZone = canonicalTimeZone(zone.trim());
+    if (!timeZone) {
       save.setError("Enter a valid IANA time zone, such as Europe/Istanbul.");
       return;
     }
@@ -327,11 +335,7 @@ export function ZoneForm({ initial, token: opened, commit, onSaved }: FormTarget
       ? store.updateRecord("settings", initial.id, token, patchBetween(initial, fields)) : store.setup(timeZone));
   }
   return <SaveForm {...save} onSave={persist} blocked={!snapshot.generation}
-    label={commit ? "Resubmit" : initial ? "Save" : "Confirm time zone"} onReapply={() => {
-      if (!save.stale?.current) return;
-      setToken({ generation: save.stale.generation, version: save.stale.current.version });
-      save.setStale(null);
-    }}>
+    label={commit ? "Resubmit" : initial ? "Save" : "Confirm time zone"}>
     <div className="field"><label htmlFor={zoneId}>Ledger time zone</label>
       <input id={zoneId} aria-describedby={`${zoneId}-hint`} required list={zonesId} value={zone} onChange={event => setZone(event.target.value)} autoComplete="off" />
       <datalist id={zonesId}>{Intl.supportedValuesOf?.("timeZone").map(value => <option key={value} value={value} />)}</datalist>

@@ -9,6 +9,25 @@ import type { Operation, RestoreRequest } from "../../src/types.ts";
 import { reviewActions } from "../../src/ui/presentation.ts";
 import { backup, deferred, harness, initial, other, payment, person, purchase, refund, token } from "./helpers.ts";
 
+test("a rejected setup must be resolved before setup can be queued again", async () => {
+  const { store, server, clock } = harness();
+  server.replace({ ...initial(), settings: null });
+  server.result.decide = () => ({ status: "rejected", code: "invalid", reason: "Invalid ledger time zone." });
+  await store.start();
+  clock.online = false;
+  const first = await store.setup("UTC");
+  assert.equal(first.status, "saved");
+  clock.online = true;
+  await store.syncNow();
+  const [held] = store.getSnapshot().reviewItems;
+  assert.equal(held.op.id, first.opId);
+  clock.online = false;
+  assert.equal((await store.setup("Europe/Istanbul")).status, "invalid");
+  assert.equal(store.getSnapshot().sync.pendingCount, 1);
+  assert.equal((await store.discard(held.op.id)).status, "saved");
+  assert.equal((await store.setup("Europe/Istanbul")).status, "saved");
+});
+
 test("offline edits are persisted and stale form saves return the current record", async () => {
   const { store, createAnother, clock } = harness();
   await store.start();
@@ -290,6 +309,31 @@ test("held operations enter restore review and operations reflected by the new g
   assert.equal(store.getSnapshot().generation, "generation-2");
   const stale = await store.updateRecord("person", person.id, { generation: "generation-1", version: person.version }, { name: "Old" });
   assert.equal(stale.status, "stale");
+});
+
+test("restore review recreates a missing payment with its original ID and saved fields", async () => {
+  const { store, clock, server, createAnother } = harness({ rules: ledger });
+  const original = { ...payment(), id: crypto.randomUUID(), version: "initial-payment",
+    paidOn: "2026-11-10", note: "Bank transfer" };
+  server.replace({ ...initial(), payments: [original] });
+  await store.start();
+  clock.online = false;
+  const edit = await store.updateRecord("payment", original.id, token(store, original), { amountMinor: 250 });
+  assert.equal(edit.status, "saved");
+  const reopened = createAnother();
+  await reopened.start();
+  server.replace({ ...initial(), generation: "restored", revision: 4 });
+  clock.online = true;
+  await reopened.syncNow();
+  const [item] = reopened.getSnapshot().reviewItems;
+  assert.equal(item.restore, true);
+  assert.equal(item.server, null);
+  assert.deepEqual(item.local, { ...original, amountMinor: 250, version: edit.opId });
+  const saved = await reopened.keepLocal(item.op.id, item);
+  assert.equal(saved.status, "saved");
+  assert.notEqual(saved.opId, edit.opId);
+  await reopened.syncNow();
+  assert.deepEqual(server.snapshot.payments, [{ ...original, amountMinor: 250, version: saved.opId }]);
 });
 
 test("a changed generation reported by receipts moves queued work to review before any send", async () => {

@@ -5,7 +5,7 @@ import { LedgerContext, SaveForm, Sheet, useLedgerUI, useSave } from "./componen
 import { CashForm, PersonForm, PurchaseForm, ZoneForm } from "./forms.tsx";
 import { Archive, Home, PersonPage, SyncBanner, UndoToasts } from "./ledger-screens.tsx";
 import type { EntryAction } from "./ledger-screens.tsx";
-import { Review, SettingsPage } from "./settings-review.tsx";
+import { Review, ReviewCard, SettingsPage } from "./settings-review.tsx";
 import type { EditToken } from "../data/index.ts";
 
 const store = createStore();
@@ -158,6 +158,7 @@ function Session() {
   const cached = snapshot.ready ? snapshot : lastReady;
   const hasWorkspace = !!(cached.buyer && cached.ledger && !cached.sync.signOutPending && !startError);
   const { sync } = snapshot;
+  const setupReview = snapshot.reviewItems.filter(item => item.op.recordType === "settings");
   return <LedgerContext.Provider value={{ store, snapshot, notify: setNotice }}>
     {startError ? <Gate title="Family Tab"><p role="alert">{startError}</p>
       <button className="button primary" onClick={() => window.location.reload()}>Try again</button></Gate>
@@ -172,9 +173,10 @@ function Session() {
             {sync.offline && <p className="hint">Connect to sign in.</p>}
           </Gate>
             : !snapshot.records.settings ? <Gate title={snapshot.generation ? "Set up your ledger" : "Family Tab"}>
-              <SyncBanner />
-              {snapshot.generation ? <ZoneForm onSaved={() => { window.location.hash = "/"; }} />
-                : <p role="status">Downloading your ledger…</p>}
+              <SyncBanner showReviewLink={false} />
+              {!snapshot.generation ? <p role="status">Downloading your ledger…</p>
+                : setupReview.length > 0 ? setupReview.map(item => <ReviewCard key={item.op.id} item={item} />)
+                : <ZoneForm onSaved={() => { window.location.hash = "/"; }} />}
             </Gate>
               : null}
     {hasWorkspace && <Activity mode={snapshot.ready ? "visible" : "hidden"} key={cached.sessionEpoch}>

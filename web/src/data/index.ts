@@ -143,7 +143,7 @@ function reviewLocal(current: LedgerRecord | null, row: Extract<QueueEntry, { st
   const { op } = row;
   if (!row.restore) return row.local;
   if (op.kind === "update" && !validPatch(op.recordType, op.patch)) return null;
-  return reviewRecord(op.recordType, op.kind === "delete" ? current : proposedRecord(current, reviewOperation(op)));
+  return reviewRecord(op.recordType, op.kind === "delete" ? current : proposedRecord(current ?? row.local, reviewOperation(op)));
 }
 
 type ReviewAction = "keepServer" | "keepLocal" | "discard" | "editAndResubmit" | "confirmAlreadyReturned";
@@ -547,6 +547,9 @@ export function createStore(options: StoreOptions = {}) {
       const view = replay(state.snapshot, state.queue, now());
       const before = view.records;
       if (findRecord(before, type, id)) return invalid("This record already exists.", "duplicate_id");
+      if (type === "settings" && state.queue.some(row => row.op.recordType === "settings" && row.op.kind === "create")) {
+        return invalid("Resolve the pending setup change before starting setup again.");
+      }
       if (type === "payout" && "personId" in input && typeof input.personId === "string" &&
           viewHasUndo(state, before, input.personId)) {
         return invalid("Wait for the undo window to end before recording cash returned.");
