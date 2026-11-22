@@ -522,6 +522,52 @@ func TestInvalidSessionsAndLogout(t *testing.T) {
 	}
 }
 
+func TestLoginIgnoresForeignParameters(t *testing.T) {
+	t.Parallel()
+
+	fixture := newFixture(t, false)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		"/auth/login?redirect_uri=https://evil.example/callback&client_id=evil"+
+			"&next=https://evil.example", nil)
+	response := httptest.NewRecorder()
+	fixture.service.LoginHandler().ServeHTTP(response, request)
+	expectStatus(t, response, http.StatusSeeOther)
+
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issuer, err := url.Parse(fixture.provider.Issuer())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query := location.Query()
+	if location.Scheme != issuer.Scheme || location.Host != issuer.Host ||
+		query.Get("redirect_uri") != "https://tab.example/auth/callback" ||
+		query.Get("client_id") != fixture.provider.ClientID {
+		t.Fatalf("login redirected to an unexpected target: %s", location)
+	}
+}
+
+func TestSessionRejectsBearerHeader(t *testing.T) {
+	t.Parallel()
+
+	fixture := newFixture(t, false)
+	handler := fixture.service.RequireSession(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("bearer header accepted as a session")
+		}),
+	)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/me", nil)
+	request.Header.Set("Authorization", "Bearer [REDACTED]")
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	expectUnauthorized(t, response)
+}
+
 func TestCallbackOnlyAcceptsGet(t *testing.T) {
 	t.Parallel()
 
