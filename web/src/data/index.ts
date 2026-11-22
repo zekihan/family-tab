@@ -148,6 +148,7 @@ function reviewLocal(current: LedgerRecord | null, row: Extract<QueueEntry, { st
 
 type ReviewAction = "keepServer" | "keepLocal" | "discard" | "editAndResubmit" | "confirmAlreadyReturned";
 type NewPerson = Omit<RecordByType["person"], "id" | "version">;
+type PurchaseFields = Omit<RecordByType["purchase"], "id" | "version">;
 
 /** A framework-independent store backed by the browser's shared IndexedDB. */
 export function createStore(options: StoreOptions = {}) {
@@ -511,6 +512,28 @@ export function createStore(options: StoreOptions = {}) {
     return { status: "saved", opId: op.id, recordId: op.recordId };
   }
 
+  function enqueueWithPerson(state: LocalState, op: Operation, before: Records, person?: NewPerson, replaced?: QueueEntry): SaveResult {
+    if (!person) return enqueue(state, op, before, replaced?.order, replaced?.dependencies);
+    if (op.recordType !== "purchase" || op.kind === "delete") {
+      return invalid("A new person can only be added when saving a purchase.");
+    }
+    // Leave a slot before a purchase in Review, and publish neither change until both validate.
+    const queue = replaced ? state.queue.map((entry, index) => ({ ...entry, order: (index + 1) * 2 })) : [...state.queue];
+    const order = replaced ? queue[state.queue.indexOf(replaced)].order : (queue.at(-1)?.order ?? 0) + 2;
+    const staging = { ...state, queue };
+    const personId = uuid();
+    const personOp: Operation = {
+      ...newOperation(op.generation, "person", personId), kind: "create", record: { ...person, id: personId },
+    };
+    const created = enqueue(staging, personOp, before, order - 1);
+    if (created.status !== "saved") return created;
+    const purchaseOp = op.kind === "create" ? { ...op, record: { ...op.record, personId } }
+      : { ...op, patch: { ...op.patch, personId } };
+    const saved = enqueue(staging, purchaseOp, applyOperation(before, personOp), order, replaced?.dependencies);
+    if (saved.status === "saved") state.queue = staging.queue;
+    return saved;
+  }
+
   async function localSave(change: (state: LocalState) => SaveResult): Promise<SaveResult> {
     try {
       const result = await changeLocal(requireDB(), epoch, change);
@@ -542,7 +565,7 @@ export function createStore(options: StoreOptions = {}) {
     return create(type, uuid(), input);
   }
 
-  function create<T extends RecordType>(type: T, id: string, input: Omit<RecordByType[T], "id" | "version">) {
+  function create<T extends RecordType>(type: T, id: string, input: Omit<RecordByType[T], "id" | "version">, person?: NewPerson) {
     return localSave(state => {
       if (!state.snapshot) return { status: "notReady" };
       const view = replay(state.snapshot, state.queue, now());
@@ -556,12 +579,13 @@ export function createStore(options: StoreOptions = {}) {
         return invalid("Wait for the undo window to end before recording cash returned.");
       }
       const record = { ...input, id } as Omit<LedgerRecord, "version">;
-      return enqueue(state, { ...newOperation(state.snapshot.generation, type, id), kind: "create", record }, before);
+      return enqueueWithPerson(state, { ...newOperation(state.snapshot.generation, type, id), kind: "create", record }, before, person);
     });
   }
 
   function edit<T extends RecordType>(
     type: T, id: string, opened: EditToken, patch?: Partial<Omit<RecordByType[T], "id" | "version">>,
+    person?: NewPerson,
   ): Promise<SaveResult> {
     return localSave(state => {
       if (!state.snapshot) return { status: "notReady" };
@@ -575,8 +599,16 @@ export function createStore(options: StoreOptions = {}) {
       const op: Operation = patch
         ? { ...base, kind: "update", patch: patchFields(type, changedFields(current, patch)) }
         : { ...base, kind: "delete", preImage: current };
-      return enqueue(state, op, before);
+      return enqueueWithPerson(state, op, before, person);
     });
+  }
+
+  /** Save a purchase and its new person in one local transaction. */
+  function savePurchaseWithNewPerson(
+    person: NewPerson, purchase: { fields: PurchaseFields } | { id: string; token: EditToken; patch: Partial<PurchaseFields> },
+  ): Promise<SaveResult> {
+    return "fields" in purchase ? create("purchase", uuid(), purchase.fields, person)
+      : edit("purchase", purchase.id, purchase.token, purchase.patch, person);
   }
 
   function undoPeople(row: QueueEntry, snapshot: Records, local: Records) {
@@ -665,31 +697,14 @@ export function createStore(options: StoreOptions = {}) {
           (original.kind === "update" && !validPatch(original.recordType, original.patch)))) {
         return invalid("Edit and resubmit this backup change before applying it.");
       }
-      let before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), time).records;
-      let staging = state;
-      let order = row.order;
-      if (newPerson) {
-        if (original.recordType !== "purchase" || original.kind === "delete") {
-          return invalid("A new person can only be added when resubmitting a purchase.");
-        }
-        // Leave a slot before the purchase and publish both operations only if both validate.
-        staging = { ...state, queue: state.queue.map((entry, index) => ({ ...entry, order: (index + 1) * 2 })) };
-        order = staging.queue[state.queue.indexOf(row)].order;
-        const id = uuid();
-        const personOp: Operation = {
-          ...newOperation(generation, "person", id), kind: "create", record: { ...newPerson, id },
-        };
-        const created = enqueue(staging, personOp, before, order - 1);
-        if (created.status !== "saved") return created;
-        before = applyOperation(before, personOp);
-        edited = { ...edited, personId: id };
-      }
+      const before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), time).records;
       const base = {
         ...newOperation(generation, original.recordType, original.recordId),
         ...(action === "confirmAlreadyReturned" || original.alreadyReturned ? { alreadyReturned: true } : {}),
       };
       let op: Operation;
       if (original.kind === "delete") {
+        if (newPerson) return invalid("A new person can only be added when saving a purchase.");
         if (!current) {
           state.queue = remaining;
           return done;
@@ -698,7 +713,7 @@ export function createStore(options: StoreOptions = {}) {
       } else if (!current) {
         const replacement = keep ?? (row.restore ? local : row.local);
         const payload = replacement ? noVersion(replacement) : original.kind === "create" ? original.record : null;
-        if (!payload && !edited) return invalid("Enter the full replacement record before resubmitting.");
+        if (!payload && !edited && !newPerson) return invalid("Enter the full replacement record before resubmitting.");
         const record = { ...payload, ...edited, id: original.recordId } as LedgerRecord;
         op = { ...base, kind: "create", record: noVersion(record) };
       } else {
@@ -710,12 +725,12 @@ export function createStore(options: StoreOptions = {}) {
             Object.keys(patch).length !== Object.keys(changes).length) {
           return invalid("This change would modify a field that cannot be edited.");
         }
-        if (row.restore && !Object.keys(patch).length) return invalid("This change has no differences from the restored ledger.");
+        if (row.restore && !Object.keys(patch).length && !newPerson) return invalid("This change has no differences from the restored ledger.");
         op = { ...base, kind: "update", baseVersion: current.version, patch };
       }
-      const result = enqueue(staging, op, before, order, row.dependencies);
+      const result = enqueueWithPerson(state, op, before, newPerson, row);
       let replacement: QueueEntry | undefined;
-      if (row.restore && op.recordType === "payout" && result.status === "invalid" &&
+      if (op.recordType === "payout" && result.status === "invalid" &&
           result.error.code === "payout_exceeds_credit") {
         replacement = {
           op, order: row.order, dependencies: row.dependencies, state: "needsReview",
@@ -725,7 +740,7 @@ export function createStore(options: StoreOptions = {}) {
         heldPayout = true;
       }
       if (result.status === "saved" || replacement) {
-        state.queue = staging.queue.flatMap(entry => {
+        state.queue = state.queue.flatMap(entry => {
           if (entry.op.id === opId) return replacement ? [replacement] : [];
           return [entry.dependencies?.includes(opId)
             ? { ...entry, dependencies: entry.dependencies.map(id => id === opId ? op.id : id) }
@@ -880,7 +895,7 @@ export function createStore(options: StoreOptions = {}) {
     syncNow,
     /** Start the ledger with the selected IANA time zone. */
     setup: (timeZone: string) => create("settings", SETTINGS_ID, { timeZone, currency: "TRY" }),
-    createRecord,
+    createRecord, savePurchaseWithNewPerson,
     /** Apply a field-level patch if the captured generation and record version still match. */
     updateRecord: <T extends RecordType>(
       type: T, id: string, opened: EditToken, patch: Partial<Omit<RecordByType[T], "id" | "version">>,

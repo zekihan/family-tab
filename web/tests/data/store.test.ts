@@ -285,6 +285,58 @@ test("confirming cash returned uses the displayed payout and rejects a stale rev
   assert.deepEqual(server.snapshot.payouts, [{ ...reviewed.local, version: sent.id }]);
 });
 
+test("payout conflict resubmissions above credit can be confirmed", async t => {
+  for (const edit of [false, true]) {
+    await t.test(edit ? "edit and resubmit" : "keep mine", async () => {
+      const { store, clock, server, createAnother } = harness({ rules: ledger });
+      const paid = { ...payment(), id: crypto.randomUUID(), version: "paid", amountMinor: 50_000 };
+      const firstPurchase = { ...purchase, totalMinor: 10_000 };
+      const payout = { id: crypto.randomUUID(), version: "first-payout", personId: person.id,
+        amountMinor: 10_000, paidOutOn: paid.paidOn, note: null };
+      server.replace({ ...initial(), payments: [paid], purchases: [firstPurchase], refunds: [], payouts: [payout] });
+      await store.start();
+      clock.online = false;
+      const saved = await store.updateRecord("payout", payout.id, token(store, payout), { amountMinor: 25_000 });
+      assert.equal(saved.status, "saved");
+
+      const remote = { ...payout, version: "remote-payout", note: "Server note" };
+      const secondPurchase = { ...firstPurchase, id: crypto.randomUUID(), version: "second-purchase", totalMinor: 30_000 };
+      server.replace({ ...server.snapshot, payouts: [remote], purchases: [firstPurchase, secondPurchase], revision: 5 });
+      server.result.decide = op => op.id === saved.opId ? { status: "conflict", code: "conflict", current: remote } : undefined;
+      clock.online = true;
+      await store.syncNow();
+      const [conflict] = store.getSnapshot().reviewItems;
+      assert.equal(conflict.code, "conflict");
+      const submitted = edit
+        ? await store.editAndResubmit(conflict.op.id, { amountMinor: 23_000, note: "My updated note" }, conflict)
+        : await store.keepLocal(conflict.op.id, conflict);
+      assert.equal(submitted.status, "invalid");
+      assert.equal(submitted.error.code, "payout_exceeds_credit");
+
+      const reopened = createAnother();
+      await reopened.start();
+      const [held] = reopened.getSnapshot().reviewItems;
+      assert.equal(held.code, "payout_exceeds_credit");
+      assert.equal(reviewActions(held).confirmPayout, true);
+      assert.notEqual(held.op.id, conflict.op.id);
+      assert.equal(held.op.kind === "update" && held.op.baseVersion, remote.version);
+      assert.deepEqual(held.server, remote);
+      assert.deepEqual(held.local, {
+        ...payout, version: held.op.id, amountMinor: edit ? 23_000 : 25_000, note: edit ? "My updated note" : null,
+      });
+      assert.deepEqual(reopened.getSnapshot().records.payouts, [remote]);
+
+      assert.equal((await reopened.confirmAlreadyReturned(held.op.id, held)).status, "saved");
+      await reopened.syncNow();
+      const confirmed = server.operations.at(-1)!.items[0].op;
+      assert.deepEqual(confirmed, { ...held.op, id: confirmed.id, alreadyReturned: true });
+      assert.notEqual(confirmed.id, held.op.id);
+      assert.deepEqual(server.snapshot.payouts, [{ ...held.local, version: confirmed.id }]);
+      assert.deepEqual(reopened.getSnapshot().reviewItems, []);
+    });
+  }
+});
+
 test("held operations enter restore review and operations reflected by the new generation disappear", async () => {
   const { store, clock, server } = harness();
   await store.start();

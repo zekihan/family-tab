@@ -425,3 +425,46 @@ test("a cash payout above the remaining credit is held and can be confirmed as a
   await figure(other.page, "Cash returned", 8_000);
   await figure(other.page, "Left to pay", 4_000);
 });
+
+test("a payout edited in conflict review can be confirmed above credit", async ({ app, page, newDevice }) => {
+  await seedPerson(page, app.url);
+  await cash(page, "500");
+  await cash(page, "100", { payout: true });
+  await synced(page);
+  const other = await newDevice();
+  await openLedger(other.page, app.url);
+  await person(other.page);
+  await goOffline(other.page);
+
+  const editPayout = async (device: Page) => {
+    await device.getByRole("button", { name: "Edit cash return of 100 TL", exact: true }).click();
+    return device.getByRole("dialog", { name: "Edit cash returned" });
+  };
+  const local = await editPayout(other.page);
+  await local.getByLabel("Amount", { exact: true }).fill("250");
+  await save(local);
+  const remote = await editPayout(page);
+  await remote.getByLabel("Note (optional)").fill("Server note");
+  await save(remote);
+  await purchase(page, { item: "Shoes", price: "300" });
+  await synced(page);
+
+  await other.context.setOffline(false);
+  const item = await review(other.page, "Edit cash return");
+  await expect(item.getByRole("button", { name: "Keep mine", exact: true })).toBeVisible();
+  await item.getByRole("button", { name: "Edit and resubmit" }).click();
+  const editor = other.page.getByRole("dialog", { name: "Resubmit cash return" });
+  await editor.getByLabel("Amount", { exact: true }).fill("230");
+  await editor.getByLabel("Note (optional)").fill("My updated note");
+  await editor.getByRole("button", { name: "Resubmit", exact: true }).click();
+  await expect(editor).toBeHidden();
+  await expect(item).toContainText("230 TL");
+  await expect(item).toContainText("My updated note");
+  await item.getByRole("button", { name: "Confirm cash already returned", exact: true }).click();
+  const dialog = other.page.getByRole("dialog", { name: "Confirm cash already returned" });
+  await expect(dialog).toContainText("230 TL");
+  await expect(dialog).toContainText("My updated note");
+  await dialog.getByRole("button", { name: "Confirm cash already returned", exact: true }).click();
+  await synced(other.page);
+  expect((await snapshot(other.page)).payouts).toMatchObject([{ amountMinor: 23_000, note: "My updated note" }]);
+});

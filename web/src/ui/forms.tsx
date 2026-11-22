@@ -6,7 +6,7 @@ import {
 } from "../ledger/index.ts";
 import type { LedgerRecord, Payment, Payout, Plan, RecordByType, RecordType, Refund } from "../types.ts";
 import { AmountField, Chip, DateField, SaveForm, useLedgerUI, useSave } from "./components.tsx";
-import type { Commit } from "./components.tsx";
+import type { Commit, DateFieldHandle } from "./components.tsx";
 import { displayDate, eventDateMax, patchBetween, paymentLabels, purchaseDate } from "./presentation.ts";
 
 type Fields<T extends RecordType> = Omit<RecordByType[T], "id" | "version">;
@@ -55,7 +55,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   personId?: string;
   commitWithNewPerson?: (fields: Fields<"purchase">, person: Fields<"person">, recreateGeneration?: string) => Promise<SaveResult>;
 }) {
-  const { snapshot } = useLedgerUI();
+  const { snapshot, store } = useLedgerUI();
   const today = snapshot.ledger!.today;
   const { initial } = target;
   const active = snapshot.records.people.filter(person => !person.archived);
@@ -76,10 +76,10 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const [countText, setCountText] = useState(String(initial?.count ?? 6));
   const [other, setOther] = useState(!!initial?.count && !installmentCounts.includes(initial.count));
   const [first, setFirst] = useState(initial?.firstDue ? { firstDue: initial.firstDue, dueDay: initial.dueDay! } : null);
+  const firstDueField = useRef<DateFieldHandle>(null);
   const [boughtOn, setBoughtOn] = useState<string | null>(null);
   const [note, setNote] = useState(initial?.note ?? "");
   const save = useRecordForm("purchase", target);
-  const { store } = useLedgerUI();
   const newNameInput = useRef<HTMLInputElement>(null);
 
   const payday = newPerson ? (newPayday ? Number(newPayday) : null) : person?.payday ?? null;
@@ -128,15 +128,11 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
       save.setError("Enter the new person’s name.");
       return;
     }
-    void save.submit(async () => {
+    void save.submit(() => {
       const fieldsForPerson = { name: newName.trim(), payday, archived: false };
       if (commitWithNewPerson) return commitWithNewPerson(fields, fieldsForPerson, save.recreateGeneration);
-      const result = await store.createRecord("person", fieldsForPerson);
-      if (result.status !== "saved") return result;
-      fields.personId = result.recordId;
-      setWho(result.recordId);
-      setNewPerson(false);
-      return save.commit(fields);
+      return store.savePurchaseWithNewPerson(fieldsForPerson, initial && save.token
+        ? { id: initial.id, token: save.token, patch: patchBetween(initial, fields) } : { fields });
     });
   }
 
@@ -182,7 +178,8 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
         </div>
         <div aria-live="polite">
           {preview && <p className="hint num installment-preview">
-            <strong>{previewText}</strong> · {displayDate(preview.first)} – {displayDate(preview.last)}
+            <strong>{previewText}</strong> · <button type="button" aria-label={`Change first installment date, ${displayDate(preview.first)}`}
+              onClick={() => firstDueField.current?.openPicker()}>{displayDate(preview.first)}</button> – {displayDate(preview.last)}
           </p>}
           {invalidPlan && <p className="error-text">Choose a valid first date and 2 to 120 installments of at least one kuruş each.</p>}
         </div>
@@ -190,7 +187,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
       {other && <label className="field">Number of installments
         <input type="number" required min="2" max="120" step="1" value={countText} onChange={event => setCountText(event.target.value)} />
       </label>}
-      <DateField label="First due date" value={start.firstDue} onChange={value => {
+      <DateField ref={firstDueField} label="First due date" value={start.firstDue} onChange={value => {
         setFirst(value === defaultStart.firstDue ? defaultStart : { firstDue: value, dueDay: Number(value.slice(8)) });
       }} />
       {start.firstDue && start.firstDue === lastDayOfMonth(start.firstDue) && <label className="check">

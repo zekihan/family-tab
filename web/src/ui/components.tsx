@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
+import type { FormEvent, ReactNode, Ref } from "react";
 import type { FamilyTabStore, SaveResult, StoreSnapshot } from "../data/index.ts";
 import { formatTRY, parseAmount } from "../ledger/index.ts";
 import type { LedgerRecord, Records } from "../types.ts";
@@ -137,12 +137,15 @@ export function AmountField({ label, value, onChange }: { label: string; value: 
   </div>;
 }
 
-export function DateField({ label, value, onChange, min, max }: {
-  label: string; value: string; onChange: (value: string) => void; min?: string; max?: string;
+export type DateFieldHandle = { openPicker: () => void };
+
+export function DateField({ label, value, onChange, min, max, ref }: {
+  label: string; value: string; onChange: (value: string) => void; min?: string; max?: string; ref?: Ref<DateFieldHandle>;
 }) {
   const id = useId();
   const hint = `${id}-hint`;
   const input = useRef<HTMLInputElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(() => dateInputText(value));
   // The last date this field and its parent agreed on. Only an outside change
   // to the value replaces the text, so an invalid entry stays visible and
@@ -160,6 +163,11 @@ export function DateField({ label, value, onChange, min, max }: {
   useEffect(() => {
     input.current?.setCustomValidity(error);
   }, [error]);
+  function openPicker() {
+    try { picker.current?.showPicker(); }
+    catch { input.current?.focus(); }
+  }
+  useImperativeHandle(ref, () => ({ openPicker }), []);
   return <div className="field"><label htmlFor={id}>{label}</label>
     <div className="date-input">
       <input ref={input} id={id} required className="num" inputMode="numeric" autoComplete="off" placeholder="DD.MM.YYYY"
@@ -179,10 +187,8 @@ export function DateField({ label, value, onChange, min, max }: {
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
           <rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" />
         </svg>
-        <input type="date" tabIndex={-1} value={value} min={min} max={max}
-          onClick={event => {
-            try { event.currentTarget.showPicker(); } catch { /* The tap opens the native picker. */ }
-          }}
+        <input ref={picker} type="date" tabIndex={-1} value={value} min={min} max={max}
+          onClick={openPicker}
           onChange={event => {
             if (event.target.value) onChange(event.target.value);
           }} />

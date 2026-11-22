@@ -166,6 +166,68 @@ test("the installment amount and date range fit in the phone viewport", async ({
   await expect(preview).toBeInViewport({ ratio: 1 });
 });
 
+test("tapping the first installment date on a phone opens its picker", async ({ app, page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.clock.install({ time: new Date("2026-11-16T12:00:00Z") });
+  await seedPerson(page, app.url);
+  await page.getByRole("button", { name: "Add purchase", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add purchase" });
+  await dialog.getByLabel("Total price").fill("4800");
+  await dialog.getByRole("button", { name: "In installments", exact: true }).click();
+  const picker = dialog.locator('input[type="date"]').first();
+  await picker.evaluate(input => {
+    const date = input as HTMLInputElement;
+    const showPicker = date.showPicker.bind(date);
+    date.showPicker = () => {
+      showPicker();
+      date.dataset.pickerOpened = "true";
+    };
+  });
+  const first = dialog.getByRole("button", { name: /16 Dec 2026/ });
+  await expect(first).toBeInViewport({ ratio: 1 });
+  await first.click();
+  await expect(picker).toHaveAttribute("data-picker-opened", "true");
+  await picker.fill("2027-01-02");
+  await expect(dialog.getByLabel("First due date", { exact: true })).toHaveValue("02.01.2027");
+  await expect(first).toBeHidden();
+  await expect(dialog.getByRole("button", { name: /2 Jan 2027/ })).toBeVisible();
+});
+
+test("a rejected purchase edit does not create its inline person", async ({ app, page }) => {
+  await setup(page, app.url);
+  await purchase(page, { item: "Kitchen towels", price: "100", newPerson: "Mom", boughtOn: "2026-01-01" });
+  await person(page);
+  await page.getByRole("button", { name: "Record shop refund", exact: true }).click();
+  const refund = page.getByRole("dialog", { name: "Record shop refund" });
+  await refund.getByLabel("Amount", { exact: true }).fill("10");
+  await refund.getByLabel("Date", { exact: true }).fill("2026-01-02");
+  await save(refund);
+  await synced(page);
+  const before = await snapshot(page);
+
+  await page.getByRole("button", { name: "Edit Kitchen towels", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit purchase" });
+  await dialog.getByRole("button", { name: "+ New person", exact: true }).click();
+  await dialog.getByLabel("Name", { exact: true }).fill("Dad");
+  await dialog.getByText("Purchase date and note", { exact: true }).click();
+  const date = dialog.getByLabel("Purchase date", { exact: true });
+  await date.fill("2026-01-03");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("Invalid refund date for this purchase.");
+  await synced(page);
+  expect(await snapshot(page)).toEqual(before);
+  await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("Dad");
+
+  await date.fill("2026-01-02");
+  await save(dialog);
+  await synced(page);
+  const after = await snapshot(page);
+  const dad = after.people.find(row => row.name === "Dad");
+  expect(dad).toBeDefined();
+  expect(after.purchases).toMatchObject([{ id: before.purchases[0].id, personId: dad!.id, boughtOn: "2026-01-02" }]);
+  expect(after.refunds).toEqual(before.refunds);
+});
+
 test("saving a purchase without a person shows the error by Who on a phone screen", async ({ app, page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await setup(page, app.url);
