@@ -117,7 +117,11 @@ func (svc *Service) RequireBearer(next http.Handler) http.Handler {
 			return
 		}
 
-		me, ok := svc.verifyAccessToken(r.Context(), raw)
+		var me protocol.Me
+		if ok = jwtShaped(raw); ok {
+			me, ok = svc.verifyAccessToken(r.Context(), raw)
+		}
+
 		if !ok {
 			svc.bearerChallenge(w, "invalid_token", "The access token is not valid.")
 
@@ -134,14 +138,13 @@ func bearerToken(values []string) (string, bool) {
 		return "", false
 	}
 
-	token := values[0][len(bearerPrefix):]
-	if strings.Count(token, ".") != 2 || strings.ContainsFunc(token, func(c rune) bool {
-		return !isBase64URL(c) && c != '.'
-	}) {
-		return "", false
-	}
+	return values[0][len(bearerPrefix):], true
+}
 
-	return token, true
+func jwtShaped(token string) bool {
+	return strings.Count(token, ".") == 2 && !strings.ContainsFunc(token, func(c rune) bool {
+		return !isBase64URL(c) && c != '.'
+	})
 }
 
 func isBase64URL(c rune) bool {

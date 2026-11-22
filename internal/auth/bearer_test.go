@@ -412,6 +412,10 @@ func TestBearerRejectsHeadersAndSignatures(t *testing.T) {
 		"bad header b64": "e30x." + parts[1] + "." + parts[2],
 	}
 
+	cases["two parts"] = parts[0] + "." + parts[1]
+	cases["extra space"] = " " + valid
+	cases["trailing data"] = valid + " x"
+
 	for name, token := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -424,9 +428,6 @@ func TestBearerRejectsHeadersAndSignatures(t *testing.T) {
 		"basic scheme":     {"Basic dXNlcjpwYXNz"},
 		"scheme only":      {"Bearer"},
 		"scheme and space": {"Bearer "},
-		"two parts":        {"Bearer " + parts[0] + "." + parts[1]},
-		"extra space":      {"Bearer  " + valid},
-		"trailing data":    {"Bearer " + valid + " x"},
 		"two headers":      {"Bearer " + valid, "Bearer " + valid},
 	}
 
