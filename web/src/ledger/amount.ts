@@ -4,7 +4,7 @@ export type ParseAmountResult = { ok: true; minor: number } | { ok: false; error
 
 export function parseAmount(input: string): ParseAmountResult {
   const invalid = { ok: false, error: "Invalid amount" } as const;
-  const text = input.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
+  const text = input.replace(/^[\p{White_Space}\uFEFF]+|[\p{White_Space}\uFEFF]+$/gu, "");
   if (!/^[0-9.,]+$/.test(text)) return invalid;
 
   const lastDot = text.lastIndexOf(".");

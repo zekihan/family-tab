@@ -37,9 +37,8 @@ function PersonRow({ person }: { person: Person }) {
   const tone = chip.kind === "credit" || chip.kind === "allPaid" ? "paid" : chip.kind === "whenTheyCan" ? "" : "expected";
   return <li><a className="person-row" href={personURL(person.id)}>
     <span className="avatar" aria-hidden="true">{Array.from(person.name.trim())[0]?.toLocaleUpperCase()}</span>
-    <span className="row-copy"><strong>{person.name}</strong>
-      <span className={`status-chip ${tone}`}>{statusText(chip)}{chip.behindPlan && " · Behind plan"}</span>
-    </span>
+    <strong className="row-name">{person.name}</strong>
+    <span className={`status-chip ${tone}`}>{statusText(chip)}{chip.behindPlan && " · Behind plan"}</span>
     <span className="row-balance num">{formatTRY(balance.leftToPay)} <span aria-hidden="true">›</span></span>
   </a></li>;
 }
@@ -141,7 +140,7 @@ function PurchaseCard({ purchase, open, remove }: {
     {purchase.note && <p className="entry-note">{purchase.note}</p>}
     <div className="progress-block">
       <div className="card-title"><span className="hint">{net === 0 ? "Fully refunded" : purchase.plan === "installments"
-        ? `${view.paidCount} of ${view.adjusted.length} installments paid` : `${formatTRY(net - view.leftMinor)} paid`}</span>
+        ? `${view.paidCount} of ${view.payableCount} installments paid` : `${formatTRY(net - view.leftMinor)} paid`}</span>
         <strong className={`num ${view.leftMinor === 0 ? "paid" : ""}`}>{formatTRY(view.leftMinor)} left</strong></div>
       {purchase.plan === "installments" && net > 0 && refundedCount > 0 && <p className="hint">{refundedCount} refunded</p>}
       {net > 0 && <progress max={net} value={net - view.leftMinor} aria-label={`Repayment progress for ${purchase.item}`} />}

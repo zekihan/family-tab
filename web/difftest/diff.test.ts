@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomInt } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { calculate } from "./calculate.ts";
 import type { Result } from "./calculate.ts";
 import { generateCases } from "./generate.ts";
 import type { LedgerCase } from "./generate.ts";
@@ -44,6 +45,17 @@ test("Go and TypeScript ledger rules agree", async t => {
     assert.equal(outputs.length, cases.length, "Go must return one result per case");
     return outputs;
   };
+
+  await t.test("amounts.json", () => {
+    const fixtures = JSON.parse(readFileSync(join(root, "testdata", "amounts.json"), "utf8")) as
+      { input: string; minor: number | null }[];
+    const [ledger] = generateCases(1, 1);
+    const input = { ...ledger, amounts: fixtures.map(row => row.input) };
+    const [output] = runGo([input]);
+    const expected = fixtures.map(row => row.minor);
+    assert.deepEqual(output.amounts, expected, "Go amounts");
+    assert.deepEqual(calculate(input).amounts, expected, "TypeScript amounts");
+  });
 
   for (const seed of seeds) {
     await t.test(`seed ${seed} (${casesPerSeed} ledgers)`, () => {

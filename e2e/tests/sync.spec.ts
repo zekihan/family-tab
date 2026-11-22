@@ -5,6 +5,57 @@ import {
   settings, setup, signIn, snapshot, synced, syncStatus,
 } from "./ledger";
 
+for (const plan of ["once", "installments"] as const) {
+  test(`a draft keeps its ${plan === "once" ? "selected payday date" : "default installment date and anchor"} when another tab clears payday`, async ({
+    app, page, context,
+  }) => {
+    const now = "2025-02-15T12:00:00Z";
+    await page.clock.setFixedTime(now);
+    await setup(page, app.url);
+    await purchase(page, { item: "Kitchen towels", price: "100", newPerson: "Mom", payday: "30" });
+    await person(page);
+    await synced(page);
+
+    const other = await context.newPage();
+    await other.clock.setFixedTime(now);
+    await other.goto(page.url());
+    await other.getByRole("button", { name: "Edit person" }).click();
+    const editor = other.getByRole("dialog", { name: "Edit person" });
+
+    await page.getByRole("button", { name: "Add purchase", exact: true }).click();
+    const draft = page.getByRole("dialog", { name: "Add purchase" });
+    await draft.getByLabel("What").fill("Vacuum");
+    await draft.getByLabel("Total price").fill("500");
+    if (plan === "once") {
+      await draft.getByRole("button", { name: "Their payday" }).click();
+      await expect(draft.getByText("28 Feb 2025", { exact: true })).toBeVisible();
+    } else {
+      await draft.getByRole("button", { name: "In installments" }).click();
+      await expect(draft.getByLabel("First due date", { exact: true })).toHaveValue("28.02.2025");
+    }
+
+    await editor.getByLabel("Name", { exact: true }).fill("Mom updated");
+    await editor.getByLabel("Payday (optional)").fill("");
+    await save(editor);
+    await synced(other);
+    await expect(draft.getByRole("button", { name: "Mom updated" })).toBeVisible();
+
+    if (plan === "once") {
+      await expect(draft.getByRole("button", { name: "Their payday" })).toHaveCount(0);
+      await expect(draft.getByRole("button", { name: "Custom date", pressed: true })).toBeVisible();
+      await expect(draft.getByLabel("Custom due date", { exact: true })).toHaveValue("28.02.2025");
+    } else {
+      await expect(draft.getByLabel("First due date", { exact: true })).toHaveValue("28.02.2025");
+      await expect(draft.getByText(/30 Jul 2025/)).toBeVisible();
+    }
+    await save(draft);
+    await synced(page);
+    const saved = (await snapshot(page)).purchases.find(row => row.item === "Vacuum");
+    expect(saved).toMatchObject(plan === "once"
+      ? { dueDate: "2025-02-28" } : { firstDue: "2025-02-28", dueDay: 30 });
+  });
+}
+
 test("setup and settings save time zones with IANA casing", async ({ app, page }) => {
   await setup(page, app.url, "europe/istanbul");
   expect((await snapshot(page)).settings?.timeZone).toBe("Europe/Istanbul");

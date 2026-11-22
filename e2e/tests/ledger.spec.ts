@@ -174,7 +174,8 @@ test("tapping the first installment date on a phone opens its picker", async ({ 
   const dialog = page.getByRole("dialog", { name: "Add purchase" });
   await dialog.getByLabel("Total price").fill("4800");
   await dialog.getByRole("button", { name: "In installments", exact: true }).click();
-  const picker = dialog.locator('input[type="date"]').first();
+  await expect.poll(() => dialog.ariaSnapshot()).toContain('"Choose First due date from calendar"');
+  const picker = dialog.getByLabel("Choose First due date from calendar", { exact: true });
   await picker.evaluate(input => {
     const date = input as HTMLInputElement;
     const showPicker = date.showPicker.bind(date);
@@ -273,6 +274,32 @@ test("Home due amounts share a baseline at 390 pixels in both color schemes", as
   }
 });
 
+test("Home keeps the behind-plan chip on one line at 390 pixels in both color schemes", async ({ app, page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page, app.url);
+  await purchase(page, { item: "Vacuum", price: "2000", newPerson: "Mom", dueDate: "2020-01-01" });
+  const row = page.getByRole("link", { name: /^Mom .*Behind plan/ });
+  const chip = row.getByText("2.000 TL due by today · Behind plan", { exact: true });
+  await expect(chip).toBeVisible();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    const { lines, underName, fits } = await chip.evaluate(element => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const text = Array.from(range.getClientRects());
+      const chipBox = element.getBoundingClientRect();
+      const nameBox = element.closest("a")!.querySelector("strong")!.getBoundingClientRect();
+      return {
+        lines: new Set(text.map(rect => rect.top)).size,
+        underName: chipBox.top >= nameBox.bottom && chipBox.left === nameBox.left,
+        fits: text.every(rect => rect.right <= chipBox.right),
+      };
+    });
+    expect({ lines, underName, fits }, colorScheme).toEqual({ lines: 1, underName: true, fits: true });
+  }
+});
+
 test("Undo toasts identify the deleted record", async ({ app, page }) => {
   await seedPerson(page, app.url);
   await purchase(page, { item: "Robot vacuum", price: "200" });
@@ -312,16 +339,16 @@ test("Undo toasts identify the deleted record", async ({ app, page }) => {
   await expect(toast.getByText("Person Dad deleted", { exact: true })).toBeVisible();
 });
 
-test("installment progress keeps the original count and labels refunded installments", async ({ app, page }) => {
+test("installment progress counts only payable installments and labels refunded installments", async ({ app, page }) => {
   await setup(page, app.url);
   await purchase(page, { item: "Robot vacuum", price: "600", newPerson: "Mom", firstDue: "2020-01-01" });
   await person(page);
-  await cash(page, "200");
+  await cash(page, "500");
   await page.getByRole("button", { name: "Record shop refund" }).click();
   const dialog = page.getByRole("dialog", { name: "Record shop refund" });
   await dialog.getByLabel("Amount", { exact: true }).fill("100");
   await save(dialog);
-  await expect(page.getByText("2 of 6 installments paid", { exact: true })).toBeVisible();
+  await expect(page.getByText("5 of 5 installments paid", { exact: true })).toBeVisible();
   await expect(page.getByText("1 refunded", { exact: true })).toBeVisible();
 });
 

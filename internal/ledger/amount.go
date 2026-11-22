@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -16,7 +17,9 @@ const (
 var errAmount = errors.New("invalid amount")
 
 func parseAmount(input string) (int64, error) {
-	input = strings.TrimSpace(input)
+	input = strings.TrimFunc(input, func(char rune) bool {
+		return unicode.IsSpace(char) || char == '\uFEFF'
+	})
 	for _, char := range input {
 		if (char < '0' || char > '9') && char != '.' && char != ',' {
 			return 0, errAmount

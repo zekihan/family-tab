@@ -5,21 +5,45 @@ const PREFIX = "family-tab-shell-";
 const CACHE = PREFIX + BUILD_ID;
 const SHELL = ["/index.html", "/manifest.webmanifest", "/icon.svg", ...ASSETS];
 const NAVIGATION_TIMEOUT_MS = 3000;
+const SHELL_TYPES = {
+  html: ["text/html"],
+  js: ["text/javascript", "application/javascript", "application/x-javascript", "text/ecmascript", "application/ecmascript"],
+  css: ["text/css"],
+  webmanifest: ["application/manifest+json", "application/json"],
+  json: ["application/json"],
+  svg: ["image/svg+xml"],
+};
+
+function isShellResponse(path, response) {
+  const type = (response.headers.get("Content-Type") ?? "").split(";", 1)[0].trim().toLowerCase();
+  return response.ok && response.status !== 206 && !response.redirected && response.body !== null &&
+    !response.headers.has("Content-Range") && SHELL_TYPES[path.split(".").at(-1)]?.includes(type);
+}
 
 async function isMatchingShell(response) {
-  return response.ok && response.status !== 206 && !response.redirected &&
-    /^text\/html(?:\s*;|$)/i.test(response.headers.get("Content-Type") ?? "") &&
+  return isShellResponse("/index.html", response) &&
     (await response.clone().text()).includes(`<meta name="family-tab-build" content="${BUILD_ID}">`);
 }
 
 async function installShell() {
-  const request = path => new Request(path, { cache: "reload", credentials: "omit" });
+  const request = path => new Request(path, { cache: "reload", credentials: "omit", redirect: "error" });
   const [index, ...assets] = SHELL;
   const response = await fetch(request(index));
   if (!await isMatchingShell(response)) throw new Error("The app shell does not match the service worker.");
+  const responses = await Promise.all(assets.map(async path => {
+    const asset = await fetch(request(path));
+    if (!isShellResponse(path, asset)) throw new Error(`Invalid shell response for ${path}.`);
+    return [path, asset];
+  }));
   const cache = await caches.open(CACHE);
-  await cache.addAll(assets.map(request));
-  await cache.put(index, response);
+  try {
+    for (const [path, asset] of responses) await cache.put(path, asset);
+    await cache.put(index, response);
+  } catch (error) {
+    // Cache.put reads the entire body and can fail after earlier files were written.
+    await caches.delete(CACHE);
+    throw error;
+  }
 }
 
 self.addEventListener("install", (event) => {

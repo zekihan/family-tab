@@ -93,6 +93,9 @@ func TestRoutingAndHeaders(t *testing.T) {
 		{"/index.html", http.MethodGet, "", "<title>Family Tab</title>", "no-cache", http.StatusOK},
 		{"/sw.js", http.MethodGet, "", "service worker", "no-cache", http.StatusOK},
 		{"/manifest.webmanifest", http.MethodGet, "", "{}", "no-cache", http.StatusOK},
+		{"/assets/missing.js", http.MethodGet, "", "404", "", http.StatusNotFound},
+		{"/assets/missing", http.MethodGet, "", "404", "", http.StatusNotFound},
+		{"/favicon.png", http.MethodGet, "", "404", "", http.StatusNotFound},
 		{
 			"/assets/app.js",
 			http.MethodGet,

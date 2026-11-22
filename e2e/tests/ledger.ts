@@ -85,10 +85,10 @@ export async function purchase(page: Page, fields: {
   if (fields.firstDue) {
     await button(dialog, "In installments").click();
     await button(dialog, "6").click();
-    await dialog.getByLabel("First due date").fill(fields.firstDue);
+    await dialog.getByLabel("First due date", { exact: true }).fill(fields.firstDue);
   } else if (fields.dueDate) {
     await button(dialog, "Custom date").click();
-    await dialog.getByLabel("Custom due date").fill(fields.dueDate);
+    await dialog.getByLabel("Custom due date", { exact: true }).fill(fields.dueDate);
   }
   if (fields.boughtOn) {
     await dialog.getByText("Purchase date and note", { exact: true }).click();

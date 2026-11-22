@@ -246,6 +246,7 @@ Codes: a missing reference is `not_found`, a repeated ID is `duplicate_id` (IDs 
 - Dates must be real calendar dates in `YYYY-MM-DD` form. Settings `timeZone` must be a name that loads from the IANA database (`UTC` included); `""` and `Local` are invalid.
 - Names and items are non-empty after trimming. Notes, when non-null, are at most 500 characters; names and items at most 200.
 - Amounts and `totalMinor` are integers from 1 through 10,000,000,000.
+- Amount input trims Unicode `White_Space` and U+FEFF from both ends before parsing. Whitespace inside the amount is invalid.
 - `boughtOn`, `paidOn`, `refundedOn` and `paidOutOn` are ≤ today. `dueDate` and `firstDue` are ≥ `boughtOn`. A refund's `refundedOn` is ≥ its purchase's `boughtOn`.
 - Once: `count`, `firstDue` and `dueDay` are null. Installments: `dueDate` is null, `count` is 2–120, `totalMinor` ≥ `count`, `dueDay` is 1–31, and `firstDue` has the day `min(dueDay, daysInMonth(firstDue))`.
 - Payday, when non-null, is an integer 1–31.

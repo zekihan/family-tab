@@ -71,10 +71,13 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const [item, setItem] = useState(initial?.item ?? "");
   const [amount, setAmount] = useState(initial ? formatAmountInput(initial.totalMinor) : "");
   const [plan, setPlan] = useState<Plan>(initial?.plan ?? "once");
-  const [choice, setChoice] = useState<DueChoice>(initial?.dueDate ? "custom" : "none");
+  const [selectedDue, setSelectedDue] = useState<{ choice: DueChoice; date: string | null }>({
+    choice: initial?.dueDate ? "custom" : "none", date: null,
+  });
   const [customDue, setCustomDue] = useState(initial?.dueDate ?? today);
   const [countText, setCountText] = useState(String(initial?.count ?? 6));
   const [other, setOther] = useState(!!initial?.count && !installmentCounts.includes(initial.count));
+  const [personStart, setPersonStart] = useState(() => defaultInstallmentStart(today, person?.payday ?? null));
   const [first, setFirst] = useState(initial?.firstDue ? { firstDue: initial.firstDue, dueDay: initial.dueDay! } : null);
   const firstDueField = useRef<DateFieldHandle>(null);
   const [boughtOn, setBoughtOn] = useState<string | null>(null);
@@ -84,9 +87,11 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
 
   const payday = newPerson ? (newPayday ? Number(newPayday) : null) : person?.payday ?? null;
   const shortcuts = dueShortcuts(today, payday);
-  const defaultStart = defaultInstallmentStart(today, payday);
+  const defaultStart = newPerson ? defaultInstallmentStart(today, payday) : personStart;
   const start = first ?? defaultStart;
-  const onceDue = choice === "none" ? null : choice === "custom" ? customDue : shortcuts[choice];
+  const { choice } = selectedDue;
+  const onceDue = choice === "custom" ? customDue : selectedDue.date;
+  const displayedChoice = choice === "none" || choice === "custom" || shortcuts[choice] === onceDue ? choice : "custom";
   const due = plan === "once" ? onceDue : start.firstDue;
   const date = purchaseDate(boughtOn, initial?.boughtOn ?? today, due);
   const parsed = parseAmount(amount);
@@ -100,7 +105,12 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
     setWhoMissing(false);
     setNewPerson(false);
     setWho(id);
-    if (choice === "payday" && eligible.find(row => row.id === id)?.payday == null) setChoice("none");
+    if (id !== who) setPersonStart(defaultInstallmentStart(today, eligible.find(row => row.id === id)?.payday ?? null));
+  }
+
+  function selectDue(key: DueChoice) {
+    if (key === "custom" && displayedChoice === "custom" && onceDue) setCustomDue(onceDue);
+    setSelectedDue({ choice: key, date: key === "none" || key === "custom" ? null : shortcuts[key] });
   }
 
   function savePurchase() {
@@ -165,9 +175,12 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
     {plan === "once" ? <fieldset><legend>Due date</legend>
       <div className="choices">
         {(Object.keys(dueLabels) as DueChoice[]).filter(key => key !== "payday" || shortcuts.payday).map(key =>
-          <Chip key={key} selected={choice === key} onClick={() => setChoice(key)}>{dueLabels[key]}</Chip>)}
+          <Chip key={key} selected={displayedChoice === key} onClick={() => selectDue(key)}>{dueLabels[key]}</Chip>)}
       </div>
-      {choice === "custom" ? <DateField label="Custom due date" value={customDue} onChange={setCustomDue} />
+      {displayedChoice === "custom" ? <DateField label="Custom due date" value={onceDue ?? customDue} onChange={value => {
+        setCustomDue(value);
+        setSelectedDue({ choice: "custom", date: null });
+      }} />
         : onceDue && <p className="hint">{displayDate(onceDue)}</p>}
     </fieldset> : <>
       <fieldset><legend>Installments</legend>

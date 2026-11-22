@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 )
@@ -27,6 +28,15 @@ func (srv *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	extension := path.Ext(strings.TrimRight(name, "/"))
+	isAsset := name == "assets" || strings.HasPrefix(name, "assets/")
+
+	if name != indexFile && (isAsset || extension != "") {
+		http.NotFound(w, r)
+
+		return
+	}
+
 	w.Header().Set("Cache-Control", noCache)
 
 	if web != nil {
@@ -36,6 +46,12 @@ func (srv *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 
 			return
 		}
+	}
+
+	if name == indexFile {
+		http.NotFound(w, r)
+
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

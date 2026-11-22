@@ -183,11 +183,11 @@ export function DateField({ label, value, onChange, min, max, ref }: {
             onChange(next);
           }
         }} />
-      <span className="date-picker" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <span className="date-picker">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
           <rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" />
         </svg>
-        <input ref={picker} type="date" tabIndex={-1} value={value} min={min} max={max}
+        <input ref={picker} type="date" aria-label={`Choose ${label} from calendar`} tabIndex={-1} value={value} min={min} max={max}
           onClick={openPicker}
           onChange={event => {
             if (event.target.value) onChange(event.target.value);

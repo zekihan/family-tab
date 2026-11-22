@@ -61,6 +61,64 @@ test.describe("online with an unavailable shell", () => {
     await expect(page.getByRole("heading", { name: "Mom", exact: true })).toBeVisible();
   });
 
+  test("an update serving HTML for its new script leaves the installed ledger and cache intact", async ({ app, page }) => {
+    await seedPerson(page, app.url);
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+    const build = page.locator('meta[name="family-tab-build"]');
+    const originalBuild = (await build.getAttribute("content"))!;
+    const cacheContents = () => page.evaluate(async () => {
+      const name = document.querySelector<HTMLMetaElement>('meta[name="family-tab-build"]')!.content;
+      const cacheName = `family-tab-shell-${name}`;
+      const storage = await caches.keys();
+      const cache = storage.includes(cacheName) ? await caches.open(cacheName) : undefined;
+      return { storage, entries: (await cache?.keys())?.map(request => request.url).sort() };
+    });
+    const originalContents = await cacheContents();
+    expect(originalContents.entries).toContainEqual(expect.stringMatching(/\/assets\/.*\.js$/));
+
+    const [script, html] = await Promise.all(["sw.js", "index.html"].map(path =>
+      readFile(new URL(`../../web/dist/${path}`, import.meta.url), "utf8"),
+    ));
+    const originalAsset = html.match(/src="(\/assets\/[^"]+\.js)"/)![1];
+    const nextBuild = "mixed-rollout-e2e-build";
+    const nextAsset = "/assets/new-build.js";
+    const nextShell = html.replace(originalBuild, nextBuild).replace(originalAsset, nextAsset);
+    const assetRequested = Promise.withResolvers<void>();
+    for (const path of ["/", "/index.html", nextAsset]) {
+      app.respond(path, response => {
+        response.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+        response.end(path === nextAsset ? html : nextShell);
+        if (path === nextAsset) assetRequested.resolve();
+      });
+    }
+    app.respond("/sw.js", response => {
+      response.writeHead(200, { "Content-Type": "text/javascript" });
+      response.end(script.replace(originalBuild, nextBuild).replace(originalAsset, nextAsset));
+    });
+
+    const installation = page.evaluate(async () => {
+      const registration = await navigator.serviceWorker.ready;
+      const finished = new Promise<string>(resolve => {
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing!;
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" || worker.state === "redundant") resolve(worker.state);
+          });
+        }, { once: true });
+      });
+      await registration.update();
+      return finished;
+    });
+    await assetRequested.promise;
+    const state = await installation;
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Mom", exact: true })).toBeVisible();
+    await figure(page, "Left to pay", 10_000);
+    await expect(build).toHaveAttribute("content", originalBuild);
+    expect(await cacheContents()).toEqual(originalContents);
+    expect(state).toBe("redundant");
+  });
+
   test("navigation and service worker discovery share one startup window", async ({ app, page }) => {
     await seedPerson(page, app.url);
     await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
