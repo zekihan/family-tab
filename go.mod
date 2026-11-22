@@ -11,6 +11,7 @@ require (
 	github.com/sethvargo/go-envconfig/v2 v2.0.0
 	github.com/zekihan/go-commons v1.0.9
 	golang.org/x/oauth2 v0.38.0
+	golang.org/x/text v0.44.0
 	modernc.org/sqlite v1.62.0
 )
 

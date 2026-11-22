@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
 import {
-  computeLedger, defaultInstallmentStart, dueShortcuts, parseAmount, paymentChips, validateChange, validateRecords,
+  computeLedger, defaultInstallmentStart, dueShortcuts, normalizeName, parseAmount, paymentChips, validateChange,
+  validateRecords,
 } from "../../src/ledger/index.ts";
 import type { PurchaseView } from "../../src/ledger/index.ts";
 import type {
@@ -167,6 +168,12 @@ for (const { today, payday, shortcuts, installmentStart } of defaultsFixtures) {
   test(`defaults.json — ${today} payday ${payday}`, () => {
     assert.deepEqual(dueShortcuts(today, payday), shortcuts);
     assert.deepEqual(defaultInstallmentStart(today, payday), installmentStart);
+  });
+}
+
+for (const { input, normalized } of readJSON<{ input: string; normalized: string }[]>("names.json")) {
+  test(`names.json — ${JSON.stringify(input)}`, () => {
+    assert.equal(normalizeName(input), normalized);
   });
 }
 

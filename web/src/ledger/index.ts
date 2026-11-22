@@ -66,3 +66,4 @@ export interface Change {
 
 export { MAX_AMOUNT_MINOR } from "./limits.ts";
 export { validateRecords, validateChange } from "./validate.ts";
+export { normalizeName, trimName } from "./names.ts";
