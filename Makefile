@@ -69,9 +69,8 @@ test/diff:
 	npm --prefix web run test:diff
 
 ## test/e2e: Playwright against the built binary with a mock OIDC provider
-test/e2e: build
-	npm --prefix e2e ci
-	npm --prefix e2e test
+test/e2e:
+	GO="$(GO)" ./e2e/run.sh
 
 test/cover:
 	mkdir -p $(TMP_DIR)
