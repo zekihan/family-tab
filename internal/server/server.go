@@ -20,12 +20,18 @@ type Auth interface {
 	CallbackHandler() http.Handler
 	LogoutHandler() http.Handler
 	RequireSession(next http.Handler) http.Handler
+	// MCPEnabled reports whether /mcp and its metadata are served.
+	MCPEnabled() bool
+	RequireBearer(next http.Handler) http.Handler
+	ProtectedResourceHandler() http.Handler
 }
 
 // Deps are the collaborators the server routes to.
 type Deps struct {
 	Auth Auth
 	Sync *syncsvc.Service
+	// MCP serves the agent endpoint at /mcp when Auth.MCPEnabled is true.
+	MCP http.Handler
 	// Web is the built frontend rooted at its index.html.
 	Web fs.FS
 }
@@ -44,6 +50,18 @@ func (srv *Server) Handler() http.Handler {
 	mux.Handle("GET /auth/callback", srv.deps.Auth.CallbackHandler())
 	mux.HandleFunc("GET /", srv.serveWeb)
 
+	// /mcp takes every method and carries no X-Family-Tab header or cookie, so
+	// it is routed before the mux, like /api. Disabled, it is a plain 404.
+	mcpHandler := http.NotFoundHandler()
+
+	if srv.deps.Auth.MCPEnabled() && srv.deps.MCP != nil {
+		metadata := srv.deps.Auth.ProtectedResourceHandler()
+		mcpHandler = srv.deps.Auth.RequireBearer(srv.deps.MCP)
+
+		mux.Handle("GET /.well-known/oauth-protected-resource", metadata)
+		mux.Handle("GET /.well-known/oauth-protected-resource/mcp", metadata)
+	}
+
 	api := srv.apiHandler()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +73,12 @@ func (srv *Server) Handler() http.Handler {
 		// before the required header is checked.
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			api.ServeHTTP(w, r)
+
+			return
+		}
+
+		if r.URL.Path == "/mcp" {
+			mcpHandler.ServeHTTP(w, r)
 
 			return
 		}

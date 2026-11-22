@@ -17,7 +17,7 @@ const (
 
 func (srv *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/")
-	if name == "auth" || strings.HasPrefix(name, "auth/") {
+	if reservedPath(name) {
 		http.NotFound(w, r)
 
 		return
@@ -56,6 +56,17 @@ func (srv *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprintln(w, "Frontend unavailable. Run make web.")
+}
+
+// reservedPath reports the server routes that must never fall back to the app.
+func reservedPath(name string) bool {
+	for _, prefix := range []string{"auth", "mcp"} {
+		if name == prefix || strings.HasPrefix(name, prefix+"/") {
+			return true
+		}
+	}
+
+	return strings.HasPrefix(name, ".well-known/")
 }
 
 func serveStatic(w http.ResponseWriter, r *http.Request, web fs.FS, name string) bool {

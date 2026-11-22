@@ -20,6 +20,7 @@ import (
 	"github.com/zekihan/family-tab/internal/auth"
 	"github.com/zekihan/family-tab/internal/backup"
 	"github.com/zekihan/family-tab/internal/config"
+	"github.com/zekihan/family-tab/internal/mcp"
 	"github.com/zekihan/family-tab/internal/server"
 	"github.com/zekihan/family-tab/internal/store"
 	"github.com/zekihan/family-tab/internal/syncsvc"
@@ -79,9 +80,12 @@ func run() error {
 		return fmt.Errorf("start: %w", err)
 	}
 
+	syncSvc := syncsvc.New(st, time.Now)
+
 	srv := server.New(server.Deps{
 		Auth: authSvc,
-		Sync: syncsvc.New(st, time.Now),
+		Sync: syncSvc,
+		MCP:  mcp.NewHandler(mcp.Deps{Ledger: syncSvc, Now: time.Now, Version: utils.Version}),
 		Web:  webFS,
 	})
 

@@ -46,12 +46,23 @@ func (auth fakeAuth) RequireSession(next http.Handler) http.Handler {
 	})
 }
 
+func (fakeAuth) MCPEnabled() bool { return false }
+
+func (fakeAuth) RequireBearer(next http.Handler) http.Handler { return next }
+
+func (fakeAuth) ProtectedResourceHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
 func TestRoutingAndHeaders(t *testing.T) {
 	t.Parallel()
 
 	handler := New(Deps{
 		Auth: fakeAuth{authenticated: false},
 		Sync: nil,
+		MCP:  nil,
 		Web: fstest.MapFS{
 			"index.html":           webFile("<!doctype html><title>Family Tab</title>"),
 			"sw.js":                webFile("// service worker"),
@@ -151,7 +162,7 @@ func TestPlaceholder(t *testing.T) {
 	t.Parallel()
 
 	handler := New(Deps{
-		Auth: fakeAuth{authenticated: false}, Sync: nil,
+		Auth: fakeAuth{authenticated: false}, Sync: nil, MCP: nil,
 		Web: fstest.MapFS{".gitkeep": webFile("")},
 	}).Handler()
 	response := httptest.NewRecorder()
@@ -431,7 +442,9 @@ func testAPI(t *testing.T) (http.Handler, *syncsvc.Service) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	svc := syncsvc.New(db, time.Now)
-	handler := New(Deps{Auth: fakeAuth{authenticated: true}, Sync: svc, Web: nil}).Handler()
+	handler := New(
+		Deps{Auth: fakeAuth{authenticated: true}, Sync: svc, MCP: nil, Web: nil},
+	).Handler()
 
 	return handler, svc
 }
