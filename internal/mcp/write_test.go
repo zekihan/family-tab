@@ -236,6 +236,55 @@ func TestAddPurchaseInstallments(t *testing.T) {
 		"firstDue must be")
 }
 
+func TestWriteValidationEdges(t *testing.T) {
+	t.Parallel()
+
+	env := newHarness(t)
+	env.setup()
+
+	mom := env.addPerson("Mom", nil)
+	purchase := env.addAppPurchase(mom, "Phone", 10000, "2026-11-01", "")
+
+	env.mustFail("add_purchase", map[string]any{
+		"personId": mom, "item": "TV", "price": "5000", "plan": "installments", "count": 121,
+	}, "invalid")
+	env.mustFail("add_purchase", map[string]any{
+		"personId": mom, "item": "TV", "price": "5000", "plan": "installments", "count": 0,
+	}, "invalid")
+	env.mustFail("add_purchase", map[string]any{
+		"personId": mom, "item": "TV", "price": "5000", "plan": "installments",
+		"firstDue": "2026-02-30",
+	}, "firstDue must be")
+	env.mustFail("record_payment", map[string]any{
+		"personId": mom, "amount": "10", "paidOn": "2026-02-30",
+	}, "YYYY-MM-DD")
+	env.mustFail("add_purchase", map[string]any{
+		"personId": mom, "item": "TV", "price": "5000", "note": strings.Repeat("a", 501),
+	}, "invalid")
+	env.mustFail("add_refund", map[string]any{
+		"purchaseId": purchase, "amount": "1", "refundedOn": "2026-10-01",
+	}, "invalid")
+
+	items := make([]any, 101)
+	for index := range items {
+		items[index] = map[string]any{"item": "X", "price": "10", "boughtOn": "2026-11-20"}
+	}
+
+	env.mustFail("check_purchases", map[string]any{"items": items}, "at most 100")
+
+	found := env.mustCall("find_purchases", map[string]any{
+		"since": "2026-12-01", "until": "2026-01-01",
+	})
+	if count(t, found, "purchases") != 0 {
+		t.Fatalf("inverted date range found purchases: %v", found)
+	}
+
+	if len(env.snapshot().Purchases) != 1 || len(env.snapshot().Payments) != 0 ||
+		len(env.snapshot().Refunds) != 0 {
+		t.Fatal("a rejected write was stored")
+	}
+}
+
 func TestAddPurchaseForArchivedPerson(t *testing.T) {
 	t.Parallel()
 
