@@ -97,9 +97,21 @@ func (srv *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 type restoreRequest struct {
+	ExpectedRevision *int64          `json:"expectedRevision"`
 	OpID             string          `json:"opId"`
 	Backup           json.RawMessage `json:"backup"`
-	ExpectedRevision int64           `json:"expectedRevision"`
+}
+
+// complete reports whether every required field was supplied; JSON null or
+// an omitted expectedRevision would otherwise decode as revision 0.
+func (req *restoreRequest) complete() bool {
+	return req.ExpectedRevision != nil && *req.ExpectedRevision >= 0 && req.OpID != "" &&
+		len(req.Backup) > 0 && !bytes.Equal(req.Backup, []byte("null"))
+}
+
+// completeRequest is implemented by requests with fields that must be present.
+type completeRequest interface {
+	complete() bool
 }
 
 func (srv *Server) restore(
@@ -109,7 +121,7 @@ func (srv *Server) restore(
 	restore := new(protocol.RestoreRequest)
 	restore.RawBackup = req.Backup
 	restore.OpID = req.OpID
-	restore.ExpectedRevision = req.ExpectedRevision
+	restore.ExpectedRevision = *req.ExpectedRevision
 
 	value, err := srv.deps.Sync.Restore(ctx, restore)
 	if err != nil {
@@ -165,6 +177,17 @@ func jsonEndpoint[Request, Response any](
 		err := decoder.Decode(req)
 		if err != nil || body[0] != '{' {
 			writeError(w, http.StatusBadRequest, "invalid", "Expected a JSON request object.")
+
+			return
+		}
+
+		if check, ok := any(req).(completeRequest); ok && !check.complete() {
+			writeError(
+				w,
+				http.StatusBadRequest,
+				"invalid",
+				"The request is missing a required field.",
+			)
 
 			return
 		}

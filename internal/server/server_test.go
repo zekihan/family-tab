@@ -262,6 +262,53 @@ func TestRestoreRejectsMalformedBackupFields(t *testing.T) {
 	}
 }
 
+func TestRestoreRequiresExpectedRevision(t *testing.T) {
+	t.Parallel()
+
+	handler, svc := testAPI(t)
+
+	before, err := svc.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	backup := `{"format":"family-tab-backup","formatVersion":1,"exportedAt":"2026-01-01T00:00:00Z",
+		"currency":"TRY","timeZone":"UTC","people":[],"purchases":[],"payments":[],"refunds":[],
+		"payouts":[],"unapplied":[]}`
+
+	for name, body := range map[string]string{
+		"null revision":    `{"opId":"` + uuid.NewString() + `","expectedRevision":null,"backup":` + backup + `}`,
+		"missing revision": `{"opId":"` + uuid.NewString() + `","backup":` + backup + `}`,
+		"negative revision": `{"opId":"` + uuid.NewString() + `","expectedRevision":-1,"backup":` +
+			backup + `}`,
+		"missing backup": `{"opId":"` + uuid.NewString() + `","expectedRevision":0}`,
+		"null backup":    `{"opId":"` + uuid.NewString() + `","expectedRevision":0,"backup":null}`,
+	} {
+		request := httptest.NewRequestWithContext(
+			t.Context(), http.MethodPost, "/api/restore", strings.NewReader(body),
+		)
+		request.Header.Set(protocol.HeaderName, protocol.HeaderValue)
+		request.Header.Set("Content-Type", mediaJSON)
+
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("%s returned %d %s", name, response.Code, response.Body)
+		}
+	}
+
+	after, err := svc.Snapshot(t.Context())
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("incomplete restore request changed the ledger: %+v, error %v", after, err)
+	}
+
+	explicitZero := `{"opId":"` + uuid.NewString() + `","expectedRevision":0,"backup":` + backup + `}`
+	if result := postRestore(t, handler, explicitZero); result.Status != protocol.StatusApplied {
+		t.Fatalf("explicit revision 0 was rejected: %+v", result)
+	}
+}
+
 func postRestore(t *testing.T, handler http.Handler, body string) *protocol.RestoreResult {
 	t.Helper()
 
