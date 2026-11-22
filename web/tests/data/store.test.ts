@@ -337,6 +337,59 @@ test("payout conflict resubmissions above credit can be confirmed", async t => {
   }
 });
 
+test("resubmitting a previously confirmed payout conflict requires fresh confirmation", async t => {
+  for (const edit of [false, true]) {
+    await t.test(edit ? "edit and resubmit" : "keep mine", async () => {
+      const { store, clock, server } = harness({ rules: ledger });
+      const paid = { ...payment(), id: crypto.randomUUID(), version: "paid", amountMinor: 60_000 };
+      const firstPurchase = { ...purchase, totalMinor: 10_000 };
+      const payout = { id: crypto.randomUUID(), version: "first-payout", personId: person.id,
+        amountMinor: 5_000, paidOutOn: paid.paidOn, note: null };
+      server.replace({ ...initial(), payments: [paid], purchases: [firstPurchase], refunds: [], payouts: [payout] });
+      await store.start();
+      clock.online = false;
+      assert.equal((await store.updateRecord("payout", payout.id, token(store, payout), { amountMinor: 25_000 })).status, "saved");
+
+      const secondPurchase = { ...firstPurchase, id: crypto.randomUUID(), version: "second-purchase", totalMinor: 40_000 };
+      server.replace({ ...server.snapshot, purchases: [firstPurchase, secondPurchase], revision: 5 });
+      server.result.decide = op => op.recordType === "payout"
+        ? { status: "rejected", code: "payout_exceeds_credit", reason: "Above credit" } : undefined;
+      clock.online = true;
+      await store.syncNow();
+      const [held] = store.getSnapshot().reviewItems;
+      assert.equal(held.code, "payout_exceeds_credit");
+
+      clock.online = false;
+      const confirmed = await store.confirmAlreadyReturned(held.op.id, held);
+      assert.equal(confirmed.status, "saved");
+      const remote = { ...payout, version: "remote-payout", note: "Server note" };
+      server.replace({ ...server.snapshot, payouts: [remote], revision: 6 });
+      server.result.decide = op => op.id === confirmed.opId
+        ? { status: "conflict", code: "conflict", current: remote } : undefined;
+      clock.online = true;
+      await store.syncNow();
+      const [conflict] = store.getSnapshot().reviewItems;
+      assert.equal(conflict.op.alreadyReturned, true);
+      assert.equal(conflict.code, "conflict");
+
+      const submitted = edit
+        ? await store.editAndResubmit(conflict.op.id, { amountMinor: 90_000 }, conflict)
+        : await store.keepLocal(conflict.op.id, conflict);
+      assert.equal(submitted.status, "invalid");
+      assert.equal(submitted.error.code, "payout_exceeds_credit");
+      const [unconfirmed] = store.getSnapshot().reviewItems;
+      assert.equal(unconfirmed.op.alreadyReturned, undefined);
+      assert.equal(reviewActions(unconfirmed).confirmPayout, true);
+      assert.deepEqual(server.snapshot.payouts, [remote]);
+
+      assert.equal((await store.confirmAlreadyReturned(unconfirmed.op.id, unconfirmed)).status, "saved");
+      await store.syncNow();
+      assert.equal(server.operations.at(-1)!.items[0].op.alreadyReturned, true);
+      assert.equal(server.snapshot.payouts[0].amountMinor, edit ? 90_000 : 25_000);
+    });
+  }
+});
+
 test("held operations enter restore review and operations reflected by the new generation disappear", async () => {
   const { store, clock, server } = harness();
   await store.start();

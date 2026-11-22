@@ -4,6 +4,31 @@ import {
   sessionCookie, settings, signIn, snapshot, synced, syncStatus,
 } from "./ledger";
 
+test.describe("online with a stalled shell request", () => {
+  test.use({ proxyShell: true });
+
+  for (const path of ["/", "/sw.js"]) {
+    test(`the installed ledger reloads when ${path} stalls`, async ({ app, page }) => {
+      await seedPerson(page, app.url);
+      await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+      const { started, resume } = app.stall(path);
+      const deadline = performance.now() + 8_000;
+      await page.reload({ waitUntil: "commit", timeout: 8_000 });
+      await expect(page.getByRole("heading", { name: "Mom", exact: true }))
+        .toBeVisible({ timeout: Math.max(1, deadline - performance.now()) });
+      await started;
+      expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+      await figure(page, "Left to pay", 10_000);
+      resume();
+      if (path === "/") {
+        await expect.poll(() => page.evaluate(async () =>
+          (await caches.match("/index.html"))?.headers.get("X-E2E-Resumed"),
+        )).toBe("1");
+      }
+    });
+  }
+});
+
 test("the cached ledger reloads offline and saved changes reach a fresh device after reconnect", async ({
   app, page, newDevice,
 }) => {

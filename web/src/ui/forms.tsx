@@ -1,10 +1,10 @@
-import { useId, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import type { EditToken, SaveResult } from "../data/index.ts";
 import {
-  canonicalTimeZone, defaultInstallmentStart, dueShortcuts, formatAmountInput, formatTRY, installmentPreview,
+  canonicalTimeZone, computeLedger, defaultInstallmentStart, dueShortcuts, formatAmountInput, formatTRY, installmentPreview,
   lastDayOfMonth, MAX_AMOUNT_MINOR, parseAmount, paymentChips,
 } from "../ledger/index.ts";
-import type { LedgerRecord, Payment, Payout, Plan, RecordByType, RecordType, Refund } from "../types.ts";
+import type { LedgerRecord, Payment, PaymentChip, Payout, Plan, RecordByType, RecordType, Refund } from "../types.ts";
 import { AmountField, Chip, DateField, SaveForm, useLedgerUI, useSave } from "./components.tsx";
 import type { Commit, DateFieldHandle } from "./components.tsx";
 import { displayDate, eventDateMax, patchBetween, paymentLabels, purchaseDate } from "./presentation.ts";
@@ -248,6 +248,7 @@ export function CashForm(target: CashTarget) {
   const chips = target.type === "payment" && !initial && person
     ? paymentChips(snapshot.ledger!, snapshot.records, person.id).filter(chip => chip.amountMinor <= MAX_AMOUNT_MINOR) : [];
   const [amount, setAmount] = useState(initial ? formatAmountInput(initial.amountMinor) : chips.length ? formatAmountInput(chips[0].amountMinor) : "");
+  const [selectedChip, setSelectedChip] = useState<PaymentChip["kind"] | null>(chips[0]?.kind ?? null);
   const initialDate = initial && ("paidOn" in initial ? initial.paidOn : "refundedOn" in initial ? initial.refundedOn : initial.paidOutOn);
   const originalDate = target.originalDate === undefined ? initialDate : target.originalDate;
   const [date, setDate] = useState(initialDate ?? today);
@@ -256,7 +257,14 @@ export function CashForm(target: CashTarget) {
   const { token } = save;
   const amountValue = parseAmount(amount);
   const undoBlocked = target.type === "payout" && !initial && !store.canRecordCashReturned(personId);
-  const credit = snapshot.ledger!.balances[personId]?.credit ?? 0;
+  const editedPayoutId = target.type === "payout" ? initial?.id : undefined;
+  const credit = useMemo(() => {
+    const { records, ledger } = snapshot;
+    const prior = editedPayoutId && records.payouts.find(row => row.id === editedPayoutId && row.personId === personId);
+    if (!prior || !person) return ledger!.balances[personId]?.credit ?? 0;
+    const withoutPayout = { ...records, people: [person], payouts: records.payouts.filter(row => row.id !== prior.id) };
+    return computeLedger(withoutPayout, today).balances[personId].credit;
+  }, [editedPayoutId, person, personId, snapshot, today]);
   const personPicker = useId();
 
   function persist() {
@@ -308,12 +316,18 @@ export function CashForm(target: CashTarget) {
       </p>}
     </>}
     {chips.length > 0 && <fieldset><legend>Quick amounts</legend>
-      <div className="choices">{chips.map(chip => <Chip key={chip.kind} onClick={() => setAmount(formatAmountInput(chip.amountMinor))}>
+      <div className="choices">{chips.map(chip => <Chip key={chip.kind} selected={selectedChip === chip.kind} onClick={() => {
+        setSelectedChip(chip.kind);
+        setAmount(formatAmountInput(chip.amountMinor));
+      }}>
         <span>{paymentLabels[chip.kind]}</span> <strong className="num">{formatTRY(chip.amountMinor)}</strong>
         {chip.shortfallMinor > 0 && <small className="hint">Includes {formatTRY(chip.shortfallMinor)} cash shortfall</small>}
       </Chip>)}</div>
     </fieldset>}
-    <AmountField label="Amount" value={amount} onChange={setAmount} />
+    <AmountField label="Amount" value={amount} onChange={value => {
+      setSelectedChip(null);
+      setAmount(value);
+    }} />
     <DateField label="Date" value={date} onChange={setDate} min={purchase?.boughtOn} max={eventDateMax(date, today, originalDate)} />
     <label className="field">Note (optional)<textarea value={note} onChange={event => setNote(event.target.value)} /></label>
     {target.type === "payment" && <p className="hint">Payments first cover any cash shortfall, then dated amounts starting with the earliest due, then purchases without a date. Anything left becomes credit.</p>}

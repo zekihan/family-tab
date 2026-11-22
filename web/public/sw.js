@@ -4,6 +4,7 @@ const ASSETS = /* __FAMILY_TAB_ASSETS__ */ [];
 const PREFIX = "family-tab-shell-";
 const CACHE = PREFIX + BUILD_ID;
 const SHELL = ["/index.html", "/manifest.webmanifest", "/icon.svg", ...ASSETS];
+const NAVIGATION_TIMEOUT_MS = 3000;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path =>
@@ -31,9 +32,26 @@ self.addEventListener("fetch", (event) => {
       /^\/(?:api|auth)(?:\/|$)/.test(url.pathname)) return;
 
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(async () =>
-      (await (await caches.open(CACHE)).match("/index.html")) ?? Response.error(),
-    ));
+    const cache = caches.open(CACHE);
+    const network = fetch(request).catch(() => null);
+    event.waitUntil(network.then(async response => {
+      if (!response?.ok || response.redirected || !response.headers.get("Content-Type")?.startsWith("text/html")) return;
+      const copy = response.clone();
+      // Keep this cache usable offline with the assets installed by this worker.
+      if ((await response.clone().text()).includes(`<meta name="family-tab-build" content="${BUILD_ID}">`)) {
+        await (await cache).put("/index.html", copy);
+      } else {
+        void copy.body?.cancel();
+      }
+    }).catch(() => undefined));
+    let timer;
+    const deadline = new Promise(resolve => {
+      timer = setTimeout(() => resolve(null), NAVIGATION_TIMEOUT_MS);
+    });
+    event.respondWith(Promise.race([network, deadline]).then(async response => {
+      clearTimeout(timer);
+      return response ?? (await (await cache).match("/index.html")) ?? Response.error();
+    }));
   } else if (SHELL.includes(url.pathname)) {
     event.respondWith(caches.open(CACHE).then(async cache =>
       (await cache.match(url.pathname)) ?? fetch(request),

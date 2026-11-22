@@ -118,6 +118,8 @@ ul { padding: 0; list-style: none; }
   padding-right: max(1rem, env(safe-area-inset-right));
 }
 .app-header { padding-top: env(safe-area-inset-top); border-bottom: 1px solid var(--line); background: var(--surface); }
+.sticky-header { position: sticky; top: 0; z-index: 2; }
+html:has(.sticky-header) { scroll-padding-top: calc(4.15rem + 1px + env(safe-area-inset-top)); }
 .header-content { display: flex; min-height: 4.15rem; justify-content: space-between; align-items: center; gap: 1rem; }
 .brand { display: inline-flex; align-items: center; gap: 0.65rem; font-size: 1.14rem; font-weight: 750; letter-spacing: -0.04em; border-radius: 0.5rem; }
 .brand img { border-radius: 0.55rem; }
@@ -339,7 +341,7 @@ input::file-selector-button { margin-right: 0.5rem; color: var(--accent); font-w
 .notice .summary-list, .notice .button { margin-top: 0.4rem; }
 .error-text { color: var(--expected); background: var(--expected-soft); }
 .installment-preview { margin-top: 0.45rem; color: var(--paid); }
-.installment-preview button { text-decoration: underline; text-underline-offset: 0.15em; cursor: pointer; }
+.installment-preview button { min-height: 44px; text-decoration: underline; text-underline-offset: 0.15em; cursor: pointer; }
 .gate {
   display: grid;
   place-items: center;

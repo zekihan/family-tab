@@ -2,7 +2,7 @@ import { useState } from "react";
 import { loginURL } from "../data/index.ts";
 import type { PurchaseView } from "../ledger/index.ts";
 import { formatTRY } from "../ledger/index.ts";
-import type { LedgerRecord, Payment, Payout, Person, Purchase, RecordType, Refund } from "../types.ts";
+import type { LedgerRecord, Operation, Payment, Payout, Person, Purchase, RecordType, Refund } from "../types.ts";
 import { Figure, personURL, RecordSummary, SaveForm, Sheet, useLedgerUI, useSave } from "./components.tsx";
 import { displayDate, recordLabels, recordName, statusText } from "./presentation.ts";
 
@@ -132,6 +132,7 @@ function PurchaseCard({ purchase, open, remove }: {
   const nextAmount = view.adjusted.reduce((sum, row, i) =>
     row.dueOn && row.dueOn === view.earliestUnpaidDue ? sum + row.adjustedMinor - view.paid[i] : sum, 0);
   const net = purchase.totalMinor - view.refundedMinor;
+  const refundedCount = view.adjusted.length - view.payableCount;
   return <article className="card purchase-card">
     <div className="card-title"><div><h3>{purchase.item}</h3><p className="hint">{displayDate(purchase.boughtOn)} · {purchase.plan === "once" ? "All at once" : `${purchase.count} installments`}</p></div>
       <div className="align-end"><strong className="num">{formatTRY(purchase.totalMinor)}</strong><p className="hint">Original total</p></div>
@@ -139,8 +140,9 @@ function PurchaseCard({ purchase, open, remove }: {
     {purchase.note && <p className="entry-note">{purchase.note}</p>}
     <div className="progress-block">
       <div className="card-title"><span className="hint">{net === 0 ? "Fully refunded" : purchase.plan === "installments"
-        ? `${view.paidCount} of ${view.payableCount} payable installments paid` : `${formatTRY(net - view.leftMinor)} paid`}</span>
+        ? `${view.paidCount} of ${view.adjusted.length} installments paid` : `${formatTRY(net - view.leftMinor)} paid`}</span>
         <strong className={`num ${view.leftMinor === 0 ? "paid" : ""}`}>{formatTRY(view.leftMinor)} left</strong></div>
+      {purchase.plan === "installments" && net > 0 && refundedCount > 0 && <p className="hint">{refundedCount} refunded</p>}
       {net > 0 && <progress max={net} value={net - view.leftMinor} aria-label={`Repayment progress for ${purchase.item}`} />}
       {view.earliestUnpaidDue && <p className="hint expected">Due {displayDate(view.earliestUnpaidDue)} · {formatTRY(nextAmount)}</p>}
     </div>
@@ -242,11 +244,19 @@ export function PersonPage({ id, open }: { id: string; open: (action: EntryActio
   </>;
 }
 
+function deletedRecordLabel({ recordType, preImage }: Extract<Operation, { kind: "delete" }>) {
+  const type = recordLabels[recordType];
+  const label = type[0].toUpperCase() + type.slice(1);
+  const name = recordName(preImage);
+  if (!name) return label;
+  return preImage && "amountMinor" in preImage ? `${label} of ${name}` : `${label} ${name}`;
+}
+
 export function UndoToasts() {
   const { snapshot, store, notify } = useLedgerUI();
   return <div className="toasts" aria-live="polite" aria-relevant="additions">
     {snapshot.pendingUndo.map(({ op }) => op.kind === "delete" && <div className="toast" key={op.id}>
-      <p>{recordName(op.preImage) ?? recordLabels[op.recordType]} deleted</p>
+      <p>{deletedRecordLabel(op)} deleted</p>
       <button className="button small" disabled={snapshot.sync.restoreInProgress} onClick={() => {
         void store.undo(op.id).then(restored => notify(restored ? "Deletion undone." : "The undo window has ended."))
           .catch(error => notify(error instanceof Error ? error.message : String(error)));

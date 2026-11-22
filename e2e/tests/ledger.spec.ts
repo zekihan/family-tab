@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures";
 import {
-  apiHeader, cash, figure, homeHeading, money, openLedger, person, purchase, save, seedPerson,
+  apiHeader, cash, figure, goOffline, homeHeading, money, openLedger, person, purchase, save, seedPerson,
   sessionCookie, setup, signIn, snapshot, synced,
 } from "./ledger";
 
@@ -185,12 +185,110 @@ test("tapping the first installment date on a phone opens its picker", async ({ 
   });
   const first = dialog.getByRole("button", { name: /16 Dec 2026/ });
   await expect(first).toBeInViewport({ ratio: 1 });
+  expect((await first.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   await first.click();
   await expect(picker).toHaveAttribute("data-picker-opened", "true");
   await picker.fill("2027-01-02");
   await expect(dialog.getByLabel("First due date", { exact: true })).toHaveValue("02.01.2027");
   await expect(first).toBeHidden();
   await expect(dialog.getByRole("button", { name: /2 Jan 2027/ })).toBeVisible();
+});
+
+test("editing cash returned shows the available credit for each person", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  await purchase(page, { item: "Dad's towels", price: "100", newPerson: "Dad" });
+  await cash(page, "400");
+  await page.getByRole("link", { name: "‹ Home", exact: true }).click();
+  await person(page, "Dad");
+  await cash(page, "700");
+  await cash(page, "200", { payout: true });
+  await figure(page, "Credit", 40_000);
+  await page.getByRole("button", { name: `Edit cash return of ${money(20_000)}` }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit cash returned" });
+  const credit = dialog.getByText("Available credit").locator("strong");
+  await expect(credit).toHaveText(money(60_000));
+  const who = dialog.getByLabel("Who");
+  await who.selectOption({ label: "Mom" });
+  await expect(credit).toHaveText(money(30_000));
+  await who.selectOption({ label: "Dad" });
+  await dialog.getByLabel("Amount", { exact: true }).fill("600");
+  await save(dialog);
+  await figure(page, "Cash returned", 60_000);
+});
+
+test("payment quick amounts show the selection until the amount is typed", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  await purchase(page, { item: "Due purchase", price: "50", dueDate: "2020-01-01" });
+  await page.getByRole("button", { name: "Record a payment" }).click();
+  const dialog = page.getByRole("dialog", { name: "Record a payment" });
+  const due = dialog.getByRole("button", { name: /^Due by today/ });
+  const all = dialog.getByRole("button", { name: /^Everything/ });
+  await expect(due).toHaveAttribute("aria-pressed", "true");
+  await expect(all).toHaveAttribute("aria-pressed", "false");
+  await all.click();
+  await expect(due).toHaveAttribute("aria-pressed", "false");
+  await expect(all).toHaveAttribute("aria-pressed", "true");
+  const amount = dialog.getByLabel("Amount", { exact: true });
+  await expect(amount).toHaveValue("150");
+  await amount.fill("125");
+  await expect(all).toHaveAttribute("aria-pressed", "false");
+});
+
+test("Undo toasts identify the deleted record", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  await purchase(page, { item: "Robot vacuum", price: "200" });
+  await purchase(page, { item: "Socks", price: "50", newPerson: "Dad" });
+  await cash(page, "600");
+  await cash(page, "200", { payout: true });
+  const vacuum = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Robot vacuum" }) });
+  await vacuum.getByRole("button", { name: "Record shop refund" }).click();
+  const refund = page.getByRole("dialog", { name: "Record shop refund" });
+  await refund.getByLabel("Amount", { exact: true }).fill("150");
+  await save(refund);
+  await goOffline(page);
+
+  const toast = page.locator(".toast");
+  for (const [button, description] of [
+    [`Delete payment of ${money(60_000)}`, `Payment of ${money(60_000)}`],
+    [`Delete cash return of ${money(20_000)}`, `Cash return of ${money(20_000)}`],
+    ["Delete shop refund for Robot vacuum", `Shop refund of ${money(15_000)}`],
+    ["Delete Kitchen towels", "Purchase Kitchen towels"],
+  ]) {
+    await page.getByRole("button", { name: button, exact: true }).click();
+    await expect(toast.getByText(`${description} deleted`, { exact: true })).toBeVisible();
+    await toast.getByRole("button", { name: "Undo" }).click();
+    await expect(toast).toBeHidden();
+  }
+  await page.getByRole("link", { name: "‹ Home", exact: true }).click();
+  await person(page, "Dad");
+  await page.getByRole("button", { name: "Delete Socks", exact: true }).click();
+  await page.getByRole("button", { name: "Delete person", exact: true }).click();
+  await expect(toast.getByText("Person Dad deleted", { exact: true })).toBeVisible();
+});
+
+test("installment progress keeps the original count and labels refunded installments", async ({ app, page }) => {
+  await setup(page, app.url);
+  await purchase(page, { item: "Robot vacuum", price: "600", newPerson: "Mom", firstDue: "2020-01-01" });
+  await person(page);
+  await cash(page, "200");
+  await page.getByRole("button", { name: "Record shop refund" }).click();
+  const dialog = page.getByRole("dialog", { name: "Record shop refund" });
+  await dialog.getByLabel("Amount", { exact: true }).fill("100");
+  await save(dialog);
+  await expect(page.getByText("2 of 6 installments paid", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 refunded", { exact: true })).toBeVisible();
+});
+
+test("the Home link stays reachable at the bottom of a person page", async ({ app, page }) => {
+  await page.setViewportSize({ width: 390, height: 500 });
+  await seedPerson(page, app.url);
+  await expect(page.getByRole("heading", { name: "Mom", exact: true })).toBeInViewport();
+  await page.getByRole("button", { name: "Archive person", exact: true }).scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => scrollY)).toBeGreaterThan(0);
+  const back = page.getByRole("link", { name: "‹ Home", exact: true });
+  await expect(back).toBeInViewport({ ratio: 1 });
+  await back.click();
+  await expect(homeHeading(page)).toBeVisible();
 });
 
 test("a rejected purchase edit does not create its inline person", async ({ app, page }) => {

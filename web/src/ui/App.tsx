@@ -96,7 +96,7 @@ function Workspace() {
   const personArchived = !!personId && snapshot.records.people.find(person => person.id === personId)?.archived;
   const home = path === "/";
   return <div className={home ? "home-layout" : undefined}>
-    <header className="app-header">
+    <header className={home ? "app-header" : "app-header sticky-header"}>
       <div className="shell header-content">
         <a className="brand" href="#/"><img src="/icon.svg" alt="" width="34" height="34" /> Family Tab</a>
         {home ? <details className="menu">

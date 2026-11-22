@@ -700,7 +700,7 @@ export function createStore(options: StoreOptions = {}) {
       const before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), time).records;
       const base = {
         ...newOperation(generation, original.recordType, original.recordId),
-        ...(action === "confirmAlreadyReturned" || original.alreadyReturned ? { alreadyReturned: true } : {}),
+        ...(action === "confirmAlreadyReturned" ? { alreadyReturned: true } : {}),
       };
       let op: Operation;
       if (original.kind === "delete") {

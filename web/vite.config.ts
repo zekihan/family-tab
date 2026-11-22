@@ -11,12 +11,19 @@ function stampServiceWorker(): Plugin {
     name: "family-tab-service-worker",
     apply: "build",
     async writeBundle(output, bundle) {
-      const path = resolve(output.dir ?? "dist", "sw.js");
+      const dir = output.dir ?? "dist";
+      const path = resolve(dir, "sw.js");
+      const index = resolve(dir, "index.html");
+      const buildId = randomUUID();
       const assets = Object.keys(bundle).filter(file => file.startsWith("assets/")).sort();
       const template = await readFile(path, "utf8");
-      await writeFile(path, template
-        .replace("__FAMILY_TAB_BUILD_ID__", randomUUID())
-        .replace("/* __FAMILY_TAB_ASSETS__ */ []", JSON.stringify(assets.map(file => "/" + file))));
+      const html = await readFile(index, "utf8");
+      await Promise.all([
+        writeFile(path, template
+          .replace("__FAMILY_TAB_BUILD_ID__", buildId)
+          .replace("/* __FAMILY_TAB_ASSETS__ */ []", JSON.stringify(assets.map(file => "/" + file)))),
+        writeFile(index, html.replace("</head>", `  <meta name="family-tab-build" content="${buildId}">\n  </head>`)),
+      ]);
     },
   };
 }

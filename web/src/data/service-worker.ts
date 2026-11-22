@@ -3,9 +3,8 @@ export function registerServiceWorker(): Promise<ServiceWorkerRegistration | und
   return navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
 }
 
-/** Returns true when a reload was requested. The legacy timeout no longer limits the startup check. */
-export async function ensureLatestApp(timeoutMs = 3000): Promise<boolean> {
-  void timeoutMs;
+/** Returns true when a reload was requested. The deadline bounds network discovery only. */
+export async function ensureLatestApp(timeoutMs = 5000): Promise<boolean> {
   if (!globalThis.navigator?.serviceWorker) return false;
 
   const serviceWorker = navigator.serviceWorker;
@@ -27,25 +26,17 @@ export async function ensureLatestApp(timeoutMs = 3000): Promise<boolean> {
     return false;
   }
 
-  const check = async (): Promise<boolean> => {
-    let registration: ServiceWorkerRegistration | undefined;
-    try {
-      registration = await registerServiceWorker();
-      if (reloading || !registration) return reloading;
-      await registration.update();
-    } catch (error) {
-      watchActivation = true;
-      if (!navigator.onLine || error instanceof TypeError ||
-          (error instanceof DOMException && error.name === "NetworkError")) return false;
-      throw error;
-    }
-
+  let registration: ServiceWorkerRegistration | undefined;
+  const waitForUpdate = () => {
     changed();
-    if (reloading) return true;
+    if (reloading) return activated;
     // Activation can already be in progress when another tab requested it.
-    const worker = registration.installing ?? registration.waiting ??
-      (registration.active?.state === "activating" ? registration.active : null);
-    if (!worker) return false;
+    const worker = registration?.installing ?? registration?.waiting ??
+      (registration?.active?.state === "activating" ? registration.active : null);
+    if (!worker) return null;
+    return activateWorker(worker);
+  };
+  const activateWorker = async (worker: ServiceWorker): Promise<true> => {
     if (worker.state === "installing") {
       let onState!: () => void;
       const installed = new Promise<void>(resolve => {
@@ -66,9 +57,36 @@ export async function ensureLatestApp(timeoutMs = 3000): Promise<boolean> {
     if (worker.state === "installed") worker.postMessage({ type: "activate" });
     return activated;
   };
+
+  // A pending register() may be queued behind another job for the same scope.
+  void serviceWorker.getRegistration("/").then(existing => { registration ??= existing; }).catch(() => undefined);
+  const checked = registerServiceWorker().then(async registered => {
+    registration = registered;
+    if (!reloading) await registration?.update();
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<true>(resolve => { timer = setTimeout(() => resolve(true), timeoutMs); });
+  const check = async (): Promise<boolean> => {
+    let timedOut = false;
+    try {
+      timedOut = (await Promise.race([checked, deadline])) === true;
+    } catch (error) {
+      watchActivation = true;
+      if (navigator.onLine && !(error instanceof TypeError) &&
+          !(error instanceof DOMException && error.name === "NetworkError")) throw error;
+    }
+
+    if (timedOut) watchActivation = true;
+    const update = waitForUpdate();
+    if (update) return update;
+    // A slow check can still discover an update after the ledger has opened.
+    if (timedOut) void checked.then(waitForUpdate).catch(() => undefined);
+    return false;
+  };
   try {
     return await Promise.race([activated, check()]);
   } finally {
+    clearTimeout(timer);
     if (!watchActivation) serviceWorker.removeEventListener("controllerchange", changed);
   }
 }
