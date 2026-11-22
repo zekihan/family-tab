@@ -2,12 +2,12 @@ import { useId, useMemo, useRef, useState } from "react";
 import type { EditToken, SaveResult } from "../data/index.ts";
 import {
   canonicalTimeZone, computeLedger, defaultInstallmentStart, dueShortcuts, formatAmountInput, formatTRY, installmentPreview,
-  lastDayOfMonth, MAX_AMOUNT_MINOR, parseAmount, paymentChips,
+  lastDayOfMonth, MAX_AMOUNT_MINOR, parseAmount, paymentChips, trimName,
 } from "../ledger/index.ts";
-import type { LedgerRecord, Payment, PaymentChip, Payout, Plan, RecordByType, RecordFields, RecordType, Refund } from "../types.ts";
-import { AmountField, Chip, DateField, SaveForm, useLedgerUI, useSave } from "./components.tsx";
+import type { LedgerRecord, Payment, PaymentChip, Payout, Person, Plan, RecordByType, RecordFields, RecordType, Refund } from "../types.ts";
+import { AgentTag, AmountField, Chip, DateField, SaveForm, useLedgerUI, useSave } from "./components.tsx";
 import type { Commit, DateFieldHandle } from "./components.tsx";
-import { displayDate, eventDateMax, patchBetween, paymentLabels, purchaseDate } from "./presentation.ts";
+import { aliasAddError, displayDate, eventDateMax, patchBetween, paymentLabels, personAliasError, purchaseDate } from "./presentation.ts";
 
 type Fields<T extends RecordType> = RecordFields<T>;
 type Saved = Extract<SaveResult, { status: "saved" }>;
@@ -166,6 +166,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   }
 
   return <SaveForm {...save} onSave={savePurchase} blocked={invalidPayday || date.invalid || invalidPlan} label={target.commit ? "Resubmit" : "Save"}>
+    <AgentTag record={initial} />
     <fieldset ref={whoField} aria-describedby={whoMissing ? whoErrorId : undefined}><legend>Who</legend>
       <div className="choices">
         {eligible.map(row => <Chip key={row.id} selected={!newPerson && who === row.id} onClick={() => selectPerson(row.id)}>
@@ -260,16 +261,52 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   </SaveForm>;
 }
 
+function AliasEditor({ aliases, onChange, name, personId, people, error }: {
+  aliases: string[]; onChange: (aliases: string[]) => void; name: string; personId: string; people: readonly Person[]; error: string | null;
+}) {
+  const [draft, setDraft] = useState("");
+  const [addError, setAddError] = useState<string | null>(null);
+  const inputId = useId();
+  const shown = addError ?? error;
+  function add() {
+    const alias = trimName(draft);
+    if (alias === "") { setDraft(""); return; }
+    const problem = aliasAddError(people, personId, name, aliases, alias);
+    if (problem) { setAddError(problem); return; }
+    onChange([...aliases, alias]);
+    setDraft("");
+    setAddError(null);
+  }
+  return <div className="field alias-editor"><label htmlFor={inputId}>Aliases (optional)</label>
+    {aliases.length > 0 && <ul className="alias-list">{aliases.map(alias => <li key={alias} className="status-chip alias-chip">
+      <span>{alias}</span>
+      <button type="button" aria-label={`Remove alias ${alias}`} onClick={() => { onChange(aliases.filter(row => row !== alias)); setAddError(null); }}>
+        <span aria-hidden="true">×</span></button>
+    </li>)}</ul>}
+    <div className="alias-add">
+      <input id={inputId} value={draft} aria-invalid={!!shown} aria-describedby={`${inputId}-${shown ? "error" : "hint"}`}
+        onChange={event => { setDraft(event.target.value); setAddError(null); }}
+        onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); add(); } }} />
+      <button type="button" className="button secondary small" onClick={add}>Add</button>
+    </div>
+    {shown && <p id={`${inputId}-error`} className="error-text" role="alert">{shown}</p>}
+    <span id={`${inputId}-hint`} className="hint">Other names this person goes by, for matching in agent tools.</span>
+  </div>;
+}
+
 export function PersonForm(target: FormTarget<"person">) {
   const { initial } = target;
   const [name, setName] = useState(initial?.name ?? "");
   const [payday, setPayday] = useState(initial?.payday == null ? "" : String(initial.payday));
   const [archived, setArchived] = useState(initial?.archived ?? false);
+  const [aliases, setAliases] = useState(initial?.aliases ?? []);
   const save = useRecordForm("person", target);
+  const { snapshot } = useLedgerUI();
   const paydayId = useId();
   const day = parsePayday(payday);
   const invalidPayday = payday !== "" && day === null;
-  return <SaveForm {...save} onSave={() => save.persist({ name: name.trim(), aliases: initial?.aliases ?? [], payday: day, archived })} blocked={invalidPayday}
+  const aliasError = personAliasError(snapshot.records.people, initial?.id ?? "", name, aliases);
+  return <SaveForm {...save} onSave={() => save.persist({ name: name.trim(), aliases, payday: day, archived })} blocked={invalidPayday || !!aliasError}
     label={target.commit ? "Resubmit" : "Save"}>
     <label className="field">Name<input required value={name} onChange={event => setName(event.target.value)} /></label>
     <div className="field"><label htmlFor={paydayId}>Payday (optional)</label>
@@ -279,6 +316,7 @@ export function PersonForm(target: FormTarget<"person">) {
       {invalidPayday && <p id={`${paydayId}-error`} className="error-text" role="alert">Enter a whole number from 1 to 31.</p>}
       <span id={`${paydayId}-hint`} className="hint">Day of the month. Changes apply to defaults for new purchases.</span>
     </div>
+    <AliasEditor aliases={aliases} onChange={setAliases} name={name} personId={initial?.id ?? ""} people={snapshot.records.people} error={aliasError} />
     {target.commit && <label className="check"><input type="checkbox" checked={archived} onChange={event => setArchived(event.target.checked)} /> Archived</label>}
   </SaveForm>;
 }
@@ -352,6 +390,7 @@ export function CashForm(target: CashTarget) {
   }
 
   return <SaveForm {...save} onSave={persist} blocked={undoBlocked} label={target.commit ? "Resubmit" : "Save"}>
+    <AgentTag record={initial} />
     {target.type === "refund" ? <>
       {target.commit ? <label className="field">Purchase
         <select required disabled={fixedPurchaseId !== undefined} value={purchaseId} onChange={event => setPurchase(event.target.value)}>

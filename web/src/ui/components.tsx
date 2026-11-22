@@ -198,6 +198,14 @@ export function DateField({ label, value, onChange, min, max, ref }: {
   </div>;
 }
 
+export function isAgentRecord(record: object | null | undefined) {
+  return !!record && "source" in record && record.source === "agent";
+}
+
+export function AgentTag({ record }: { record: object | null | undefined }) {
+  return isAgentRecord(record) ? <span className="status-chip agent-tag">via agent</span> : null;
+}
+
 export function Chip({ children, selected, onClick }: { children: ReactNode; selected?: boolean; onClick: () => void }) {
   return <button className="choice" type="button" aria-pressed={selected} onClick={onClick}>{children}</button>;
 }

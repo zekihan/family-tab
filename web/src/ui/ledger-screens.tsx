@@ -4,7 +4,7 @@ import type { StoreSnapshot } from "../data/index.ts";
 import type { PurchaseView } from "../ledger/index.ts";
 import { formatTRY } from "../ledger/index.ts";
 import type { LedgerRecord, Operation, Payment, Payout, Person, Purchase, RecordType, Refund } from "../types.ts";
-import { Figure, personURL, RecordSummary, SaveForm, Sheet, useLedgerUI, useSave } from "./components.tsx";
+import { AgentTag, Figure, personURL, RecordSummary, SaveForm, Sheet, useLedgerUI, useSave } from "./components.tsx";
 import { displayDate, recordLabels, recordName, statusText } from "./presentation.ts";
 
 export function SyncBanner({ showReviewLink = true }: { showReviewLink?: boolean }) {
@@ -134,7 +134,7 @@ function PurchaseCard({ purchase, open, remove }: {
   const net = purchase.totalMinor - view.refundedMinor;
   const refundedCount = view.adjusted.length - view.payableCount;
   return <article className="card purchase-card">
-    <div className="card-title"><div><h3>{purchase.item}</h3><p className="hint">{displayDate(purchase.boughtOn)} · {purchase.plan === "once" ? "All at once" : `${purchase.count} installments`}</p></div>
+    <div className="card-title"><div><h3>{purchase.item}</h3><AgentTag record={purchase} /><p className="hint">{displayDate(purchase.boughtOn)} · {purchase.plan === "once" ? "All at once" : `${purchase.count} installments`}</p></div>
       <div className="align-end"><strong className="num">{formatTRY(purchase.totalMinor)}</strong><p className="hint">Original total</p></div>
     </div>
     {purchase.note && <p className="entry-note">{purchase.note}</p>}
@@ -150,7 +150,7 @@ function PurchaseCard({ purchase, open, remove }: {
     {refunds.length > 0 && <div className="refunds">
       <h4 className="num">Shop refunds · {formatTRY(view.refundedMinor)}</h4>
       <ul>{refunds.map(row => <li key={row.id} className="history-row">
-        <div><strong className="num">{formatTRY(row.amountMinor)}</strong><p className="hint">{displayDate(row.refundedOn)}</p>
+        <div><strong className="num">{formatTRY(row.amountMinor)}</strong><p className="hint">{displayDate(row.refundedOn)}</p><AgentTag record={row} />
           {row.note && <p className="entry-note">{row.note}</p>}</div>
         <EntryButtons label={`shop refund for ${purchase.item}`} onEdit={() => open({ kind: "refund", purchaseId: purchase.id, record: row })}
           onDelete={() => remove("refund", row)} />
@@ -225,7 +225,7 @@ export function PersonPage({ id, open }: { id: string; open: (action: EntryActio
         <h2>Payments and cash returned</h2>
         {history.length ? <ul className="list-card history">{history.map(({ row, kind, date }) => <li key={row.id} className="history-row">
           <div><strong className="num">{formatTRY(row.amountMinor)}</strong>
-            <p className="hint">{kind === "payment" ? "Payment received" : "Cash returned"} · <time dateTime={date}>{displayDate(date)}</time></p>
+            <p className="hint">{kind === "payment" ? "Payment received" : "Cash returned"} · <time dateTime={date}>{displayDate(date)}</time></p><AgentTag record={row} />
             {row.note && <p className="entry-note">{row.note}</p>}
           </div>
           <EntryButtons label={`${recordLabels[kind]} of ${formatTRY(row.amountMinor)}`}

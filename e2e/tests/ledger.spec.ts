@@ -671,3 +671,39 @@ test("Edit person shows an inline payday error and blocks Save", async ({ app, p
   await synced(page);
   expect((await snapshot(page)).people).toMatchObject([{ name: "Mom", payday: 31 }]);
 });
+
+test("Edit person adds and removes aliases, rejects another person's name, and saves", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  await page.getByRole("link", { name: "Family Tab", exact: true }).click();
+  await purchase(page, { item: "Shoes", price: "50", newPerson: "Dad" });
+  await synced(page);
+  await page.getByRole("link", { name: "Family Tab", exact: true }).click();
+  await person(page, "Mom");
+
+  await page.getByRole("button", { name: "Edit person" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit person" });
+  const input = dialog.getByLabel("Aliases (optional)");
+  const add = dialog.getByRole("button", { name: "Add", exact: true });
+  await input.fill("  Anne  ");
+  await input.press("Enter");
+  await input.fill("Annecim");
+  await add.click();
+  await expect(dialog.getByRole("button", { name: "Remove alias Anne", exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Remove alias Annecim", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Remove alias Annecim", exact: true })).toBeHidden();
+
+  await input.fill("dad");
+  await add.click();
+  await expect(dialog.getByRole("alert")).toContainText("matches Dad");
+  await input.fill("anne");
+  await add.click();
+  await expect(dialog.getByRole("alert")).toContainText("already listed");
+  await input.fill("Mama");
+  await expect(dialog.getByRole("alert")).toBeHidden();
+  await add.click();
+  await save(dialog);
+  await synced(page);
+
+  const mom = (await snapshot(page)).people.find(row => row.name === "Mom");
+  expect(mom?.aliases).toEqual(["Anne", "Mama"]);
+});

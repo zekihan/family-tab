@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dateInputText, eventDateMax, parseDateInput, patchBetween, purchaseDate, statusText } from "../../src/ui/presentation.ts";
+import { aliasAddError, dateInputText, eventDateMax, parseDateInput, patchBetween, personAliasError, purchaseDate, reviewReason, statusText } from "../../src/ui/presentation.ts";
 
 test("caps only new or changed event dates at today", () => {
   const today = "2026-11-22";
@@ -54,4 +54,32 @@ test("date fields read and write day-first dates", () => {
   assert.equal(parseDateInput("12/15/2026"), null);
   assert.equal(parseDateInput("5.12.26"), null);
   assert.equal(parseDateInput(""), null);
+});
+
+const person = (id: string, name: string, aliases: string[] = []) => ({ id, name, aliases, payday: null, archived: false, version: "1" });
+
+test("validates person aliases with the shared rules", () => {
+  const people = [person("a", "Mom", ["Anne"]), person("b", "Dad")];
+  assert.equal(personAliasError(people, "a", "Mom", ["Anne", "Annecim"]), null);
+  assert.match(personAliasError(people, "a", "Mom", ["mom"])!, /differ/);
+  assert.match(personAliasError(people, "a", "Mom", ["X", "x"])!, /differ/);
+  assert.match(personAliasError(people, "a", "Mom", ["DAD"])!, /matches Dad/);
+  assert.match(personAliasError(people, "b", "Dad", ["ANNE"])!, /matches Mom/);
+  assert.match(personAliasError(people, "a", "Mom", ["y".repeat(41)])!, /1 to 40/);
+});
+
+test("explains why an alias cannot be added", () => {
+  const people = [person("a", "Mom"), person("b", "Dad")];
+  assert.equal(aliasAddError(people, "a", "Mom", [], ""), null);
+  assert.equal(aliasAddError(people, "a", "Mom", [], "Anne"), null);
+  assert.match(aliasAddError(people, "a", "Mom", [], "dad")!, /matches Dad/);
+  assert.match(aliasAddError(people, "a", "Mom", ["Anne"], "ANNE")!, /already listed/);
+  assert.match(aliasAddError(people, "a", "Mom", [], "MOM")!, /differ from the name/);
+  assert.match(aliasAddError(people, "a", "Mom", [], "z".repeat(41))!, /at most 40/);
+  assert.match(aliasAddError(people, "a", "Mom", Array.from({ length: 20 }, (_, i) => `n${i}`), "more")!, /at most 20/);
+});
+
+test("maps alias_conflict rejections to a friendly message", () => {
+  assert.match(reviewReason("alias_conflict", "x"), /matches another person/);
+  assert.equal(reviewReason("conflict", "server text"), "server text");
 });

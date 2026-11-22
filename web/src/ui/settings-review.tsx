@@ -6,7 +6,7 @@ import { SETTINGS_ID } from "../types.ts";
 import type { LedgerRecord, RecordFields, Settings } from "../types.ts";
 import { RecordSummary, SaveForm, Sheet, useLedgerUI, useSave } from "./components.tsx";
 import { CashForm, PersonForm, PurchaseForm, ZoneForm } from "./forms.tsx";
-import { patchBetween, recordLabels, recordName, reviewActions } from "./presentation.ts";
+import { patchBetween, recordLabels, recordName, reviewActions, reviewReason } from "./presentation.ts";
 
 export function SettingsPage() {
   const { snapshot, store, notify } = useLedgerUI();
@@ -227,7 +227,7 @@ export function ReviewCard({ item }: { item: ReviewItem }) {
   const waiting = item.waitingForRestoredLedger;
   return <article className="card review-card">
     <div><h2>{op.kind === "create" ? "Add" : op.kind === "update" ? "Edit" : "Delete"} {recordLabels[op.recordType]}</h2>
-      <p className="expected">{waiting ? "Waiting for the restored ledger to finish syncing." : item.reason}</p></div>
+      <p className="expected">{waiting ? "Waiting for the restored ledger to finish syncing." : reviewReason(item.code, item.reason)}</p></div>
     <div className="review-versions">
       <section><h3>Your change</h3>{op.kind === "delete" && <p className="hint">Marked for deletion</p>}
         {!local && op.kind === "update" ? <details>
