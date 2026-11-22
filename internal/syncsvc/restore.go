@@ -108,6 +108,10 @@ func restoreRecords(req *protocol.RestoreRequest, now time.Time) (*ledger.Record
 		return nil, "Unsupported backup format or version."
 	}
 
+	if missing := missingBackupField(backup); missing != "" {
+		return nil, "Backup is missing " + missing + "."
+	}
+
 	if backup.Currency != ledger.CurrencyTRY {
 		return nil, "Backup currency must be TRY."
 	}
@@ -185,4 +189,31 @@ func stampBackupVersions(records *ledger.Records, version string) bool {
 	}
 
 	return true
+}
+
+// missingBackupField names the first required field a decoded backup lacks.
+// JSON decoding leaves an absent array nil and an empty one non-nil, so a
+// file without a collection is rejected instead of erasing those records.
+func missingBackupField(backup *protocol.BackupFile) string {
+	required := []struct {
+		name    string
+		missing bool
+	}{
+		{"exportedAt", backup.ExportedAt == ""},
+		{"timeZone", backup.TimeZone == ""},
+		{"people", backup.People == nil},
+		{"purchases", backup.Purchases == nil},
+		{"payments", backup.Payments == nil},
+		{"refunds", backup.Refunds == nil},
+		{"payouts", backup.Payouts == nil},
+		{"unapplied", backup.Unapplied == nil},
+	}
+
+	for _, field := range required {
+		if field.missing {
+			return field.name
+		}
+	}
+
+	return ""
 }

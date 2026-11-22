@@ -1,6 +1,7 @@
 package syncsvc
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -158,8 +159,71 @@ func restoreRequest() *protocol.RestoreRequest {
 	req.Backup.FormatVersion = protocol.BackupFormatVersion
 	req.Backup.Currency = ledger.CurrencyTRY
 	req.Backup.TimeZone = "UTC"
+	req.Backup.ExportedAt = "2026-01-01T00:00:00Z"
+	req.Backup.People = []ledger.Person{}
+	req.Backup.Purchases = []ledger.Purchase{}
+	req.Backup.Payments = []ledger.Payment{}
+	req.Backup.Refunds = []ledger.Refund{}
+	req.Backup.Payouts = []ledger.Payout{}
+	req.Backup.Unapplied = []protocol.UnappliedOperation{}
 
 	return req
+}
+
+func TestRestoreRejectsBackupWithMissingCollections(t *testing.T) {
+	t.Parallel()
+
+	svc, _, generation := newLedger(t)
+	apply(t, svc, item(createOp(generation, ledger.TypePerson, personID, personPayload)))
+	before := snapshot(t, svc)
+
+	full := restoreRequest()
+	full.ExpectedRevision = before.Revision
+
+	body, err := json.Marshal(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, field := range []string{
+		"exportedAt", "people", "purchases", "payments", "refunds", "payouts", "unapplied",
+	} {
+		var decoded map[string]any
+
+		err = json.Unmarshal(body, &decoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		backup, ok := decoded["backup"].(map[string]any)
+		if !ok {
+			t.Fatal("backup is not an object")
+		}
+
+		delete(backup, field)
+
+		partial, marshalErr := json.Marshal(decoded)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+
+		req := new(protocol.RestoreRequest)
+
+		err = json.Unmarshal(partial, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result := restoreOK(t, svc, req)
+		if result.Status != protocol.StatusRejected || result.Code == nil ||
+			*result.Code != ledger.CodeInvalid {
+			t.Fatalf("backup without %s accepted: %+v", field, result)
+		}
+
+		if got := snapshot(t, svc); !reflect.DeepEqual(got, before) {
+			t.Fatalf("backup without %s changed the ledger: %+v", field, got)
+		}
+	}
 }
 
 func restoreOK(t *testing.T, svc *Service, req *protocol.RestoreRequest) *protocol.RestoreResult {
