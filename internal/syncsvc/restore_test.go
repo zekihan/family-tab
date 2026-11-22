@@ -152,7 +152,7 @@ func TestRestoreFailureLeavesLedgerIntact(t *testing.T) {
 	}
 
 	_, err := db.DB().ExecContext(t.Context(), `
-		CREATE TRIGGER reject_test_restore BEFORE INSERT ON people
+		CREATE TRIGGER reject_test_restore BEFORE INSERT ON receipts
 		BEGIN SELECT RAISE(ABORT, 'test write failure'); END;`)
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +166,22 @@ func TestRestoreFailureLeavesLedgerIntact(t *testing.T) {
 	receipts, err := svc.Receipts(t.Context(), &protocol.ReceiptsRequest{OpIDs: []string{req.OpID}})
 	if err != nil || len(receipts.Receipts) != 0 {
 		t.Fatalf("failed restore receipt stored: %+v, error %v", receipts, err)
+	}
+
+	_, err = db.DB().ExecContext(t.Context(), "DROP TRIGGER reject_test_restore")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := restoreOK(t, svc, req)
+
+	after := snapshot(t, svc)
+	person := req.Backup.People[0]
+	person.Version = req.OpID
+
+	if result.Status != protocol.StatusApplied ||
+		!reflect.DeepEqual(after.People, []ledger.Person{person}) {
+		t.Fatalf("restore retry = %+v, snapshot = %+v", result, after)
 	}
 }
 

@@ -97,7 +97,19 @@ func verifyBackupRevision(t *testing.T, path string, want int) {
 func TestRunBacksUpBeforeFirstTick(t *testing.T) {
 	t.Parallel()
 
-	st, err := store.Open(t.Context(), ":memory:")
+	runUntilBackups(t, time.Hour, 1)
+}
+
+func TestRunBacksUpOnLaterTicks(t *testing.T) {
+	t.Parallel()
+
+	runUntilBackups(t, 20*time.Millisecond, 2)
+}
+
+func runUntilBackups(t *testing.T, interval time.Duration, count int) {
+	t.Helper()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "live.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +124,7 @@ func TestRunBacksUpBeforeFirstTick(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		done <- Run(ctx, st.DB(), dir, time.Hour, 1)
+		done <- Run(ctx, st.DB(), dir, interval, count)
 	}()
 
 	deadline := time.NewTimer(5 * time.Second)
@@ -126,14 +138,22 @@ func TestRunBacksUpBeforeFirstTick(t *testing.T) {
 		case err = <-done:
 			t.Fatalf("Run stopped before cancellation: %v", err)
 		case <-deadline.C:
-			t.Fatal("no initial backup produced")
+			t.Fatalf("did not produce %d backups", count)
 		case <-ticker.C:
 			entries, readErr := os.ReadDir(dir)
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
 
-			if len(entries) == 1 && filepath.Ext(entries[0].Name()) == fileSuffix {
+			published := 0
+
+			for _, entry := range entries {
+				if filepath.Ext(entry.Name()) == fileSuffix {
+					published++
+				}
+			}
+
+			if published == count {
 				cancel()
 
 				err = <-done
@@ -145,4 +165,40 @@ func TestRunBacksUpBeforeFirstTick(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestFailedCopyPreservesExistingBackup(t *testing.T) {
+	t.Parallel()
+
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "live.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = st.Close() })
+
+	dir := t.TempDir()
+	now := time.Date(2025, time.November, 22, 12, 0, 0, 0, time.UTC)
+
+	err = copyDatabase(t.Context(), st.DB(), dir, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err = copyDatabase(ctx, st.DB(), dir, 1, now.Add(time.Second))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled copy returned %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+
+	want := filePrefix + now.Format(fileTime) + fileSuffix
+	if err != nil || len(entries) != 1 || entries[0].Name() != want {
+		t.Fatalf("failed copy changed backup directory: %v, error %v", entries, err)
+	}
+
+	verifyBackupRevision(t, filepath.Join(dir, want), 0)
 }

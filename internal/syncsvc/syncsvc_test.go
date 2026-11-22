@@ -2,6 +2,7 @@ package syncsvc
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sync"
@@ -24,7 +25,7 @@ const (
 func newService(t *testing.T, now time.Time) (*Service, *store.Store) {
 	t.Helper()
 
-	db, err := store.Open(t.Context(), ":memory:")
+	db, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "ledger.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +134,12 @@ func TestApplyReceiptsAndDependencies(t *testing.T) {
 	assertResult(t, results[3], protocol.StatusHeld, protocol.CodeGenerationMismatch, 0)
 	assertResult(t, results[4], protocol.StatusApplied, "", 3)
 
+	replayedCreate := *create
+	replayedCreate.Generation = held.Generation
+	replayedCreate.Record = json.RawMessage(`{"malformed":true}`)
+
+	assertOperationReplay(t, svc, &replayedCreate, &results[0], skip.ID)
+
 	var current ledger.Person
 
 	err := json.Unmarshal(results[1].Current, &current)
@@ -148,10 +155,7 @@ func TestApplyReceiptsAndDependencies(t *testing.T) {
 
 	conflict.Generation = held.Generation
 
-	retry := apply(t, svc, item(conflict, skip.ID))[0]
-	if !reflect.DeepEqual(retry, results[1]) {
-		t.Fatalf("receipt changed on retry: %+v, originally %+v", retry, results[1])
-	}
+	assertOperationReplay(t, svc, conflict, &results[1], skip.ID)
 
 	receipts, err := svc.Receipts(t.Context(), &protocol.ReceiptsRequest{
 		OpIDs: []string{held.ID, conflict.ID, skip.ID, create.ID},
@@ -160,6 +164,17 @@ func TestApplyReceiptsAndDependencies(t *testing.T) {
 		!reflect.DeepEqual(receipts.Receipts[0], protocol.Receipt(results[1])) ||
 		!reflect.DeepEqual(receipts.Receipts[1], protocol.Receipt(results[0])) {
 		t.Fatalf("receipts = %+v, error %v", receipts, err)
+	}
+}
+
+func assertOperationReplay(
+	t *testing.T, svc *Service, op *protocol.Operation, original *protocol.OpResult, deps ...string,
+) {
+	t.Helper()
+
+	retry := apply(t, svc, item(op, deps...))[0]
+	if !reflect.DeepEqual(retry, *original) {
+		t.Fatalf("receipt changed on retry: %+v, originally %+v", retry, *original)
 	}
 }
 
@@ -193,6 +208,13 @@ func TestConflictAfterDelete(t *testing.T) {
 	if string(conflict.Current) != "null" {
 		t.Fatalf("deleted record conflict current = %q", conflict.Current)
 	}
+
+	paymentID := uuid.NewString()
+	payment := createOp(generation, ledger.TypePayment, paymentID,
+		`{"id":"`+paymentID+`","personId":"`+personID+
+			`","amountMinor":500,"paidOn":"2025-11-01","note":null}`)
+	assertResult(t, apply(t, svc, item(payment, remove.ID))[0],
+		protocol.StatusRejected, ledger.CodeNotFound, 3)
 }
 
 func TestStrictOperations(t *testing.T) {
@@ -321,6 +343,7 @@ func TestApplyStampsSource(t *testing.T) {
 		protocol.StatusRejected, ledger.CodeInvalid, 2)
 
 	create := createOp(generation, ledger.TypePayment, paymentID, payment)
+	create.CreatedAt = "2025-10-01T12:00:00Z"
 
 	response, err := svc.Apply(
 		t.Context(), &protocol.OpsRequest{Items: []protocol.OpsItem{item(create)}},
@@ -348,9 +371,36 @@ func TestApplyStampsSource(t *testing.T) {
 		t.Fatalf("payments = %+v", got.Payments)
 	}
 
+	assertUndoTargets(t, svc, create.ID, edit.ID, withSource.ID, paymentID)
+
 	_, err = svc.Apply(t.Context(), &protocol.OpsRequest{Items: nil}, "")
 	if err == nil {
 		t.Fatal("Apply accepted an empty source")
+	}
+}
+
+func assertUndoTargets(t *testing.T, svc *Service, createID, editID, rejectedID, paymentID string) {
+	t.Helper()
+
+	for _, test := range []struct {
+		opID, recordType, recordID string
+		found                      bool
+	}{
+		{createID, ledger.TypePayment, paymentID, true},
+		{createID, ledger.TypePurchase, paymentID, false},
+		{createID, ledger.TypePayment, personID, false},
+		{editID, ledger.TypePayment, paymentID, false},
+		{rejectedID, ledger.TypePayment, paymentID, false},
+	} {
+		got, found, err := svc.CreatedAt(t.Context(), test.opID, test.recordType, test.recordID)
+		if err != nil || found != test.found {
+			t.Fatalf("lookup of %+v = %v, %v, %v", test, got, found, err)
+		}
+
+		// The lookup uses the commit time, independent of the client timestamp.
+		if found && !got.Equal(svc.now()) {
+			t.Fatalf("create committed at %s, want %s", got, svc.now())
+		}
 	}
 }
 
@@ -395,4 +445,66 @@ func TestApplyAliases(t *testing.T) {
 	}) {
 		t.Fatalf("people = %+v", got)
 	}
+}
+
+func TestApplyAllocatesPaymentAfterRefund(t *testing.T) {
+	t.Parallel()
+
+	svc, _, generation := newLedger(t)
+	person := createOp(generation, ledger.TypePerson, personID, personPayload)
+	undated := newPurchaseOp(generation, "null", "2025-11-01", "400")
+	dated := newPurchaseOp(generation, `"2025-11-15"`, "2025-11-02", "900")
+	refund := newRefundOp(generation, dated.RecordID, "200")
+	excess := newRefundOp(generation, dated.RecordID, "701")
+	paymentID := uuid.NewString()
+	payment := createOp(generation, ledger.TypePayment, paymentID,
+		`{"id":"`+paymentID+`","personId":"`+personID+
+			`","amountMinor":750,"paidOn":"2025-11-01","note":null}`)
+
+	results := apply(t, svc, item(person), item(undated, person.ID), item(dated, person.ID),
+		item(refund, dated.ID), item(excess, refund.ID), item(payment, refund.ID))
+
+	for index, revision := range []int64{2, 3, 4, 5} {
+		assertResult(t, results[index], protocol.StatusApplied, "", revision)
+	}
+
+	assertResult(t, results[4], protocol.StatusRejected, ledger.CodeRefundsExceedTotal, 5)
+	assertResult(t, results[5], protocol.StatusApplied, "", 6)
+
+	got := snapshot(t, svc)
+	if got.Revision != 6 || len(got.Refunds) != 1 || got.Refunds[0].ID != refund.RecordID {
+		t.Fatalf("unexpected revision or refund rows: %+v", got)
+	}
+
+	view := ledger.View(&got.Records, "2025-11-22")
+
+	balance := view.Balances[personID]
+	if balance.LeftToPay != 350 || balance.DueByToday != 0 || balance.Credit != 0 {
+		t.Fatalf("balance after refund and payment = %+v", balance)
+	}
+
+	paid := view.Purchases[dated.RecordID]
+
+	partial := view.Purchases[undated.RecordID]
+	if paid == nil || partial == nil || !slices.Equal(paid.Paid, []int64{700}) ||
+		!slices.Equal(partial.Paid, []int64{50}) {
+		t.Fatalf("allocated payment = dated %+v, undated %+v", paid, partial)
+	}
+}
+
+func newPurchaseOp(generation, dueDate, boughtOn, amount string) *protocol.Operation {
+	id := uuid.NewString()
+
+	return createOp(generation, ledger.TypePurchase, id,
+		`{"id":"`+id+`","personId":"`+personID+`","item":"Appliance","totalMinor":`+amount+
+			`,"boughtOn":"`+boughtOn+`","plan":"once","dueDate":`+dueDate+
+			`,"count":null,"firstDue":null,"dueDay":null,"note":null}`)
+}
+
+func newRefundOp(generation, purchaseID, amount string) *protocol.Operation {
+	id := uuid.NewString()
+
+	return createOp(generation, ledger.TypeRefund, id,
+		`{"id":"`+id+`","purchaseId":"`+purchaseID+`","amountMinor":`+amount+
+			`,"refundedOn":"2025-11-03","note":null}`)
 }
