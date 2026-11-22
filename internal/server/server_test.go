@@ -176,6 +176,51 @@ func TestPlaceholder(t *testing.T) {
 	}
 }
 
+func TestMeAndSnapshotRoutes(t *testing.T) {
+	t.Parallel()
+
+	handler, _ := testAPI(t)
+
+	meRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/me", http.NoBody)
+	meRequest.Header.Set(protocol.HeaderName, protocol.HeaderValue)
+
+	meResponse := httptest.NewRecorder()
+	handler.ServeHTTP(meResponse, meRequest)
+	expectError(t, meResponse, http.StatusUnauthorized, "unauthenticated")
+
+	snapshotRequest := httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet, "/api/snapshot", http.NoBody,
+	)
+	snapshotRequest.Header.Set(protocol.HeaderName, protocol.HeaderValue)
+
+	snapshotResponse := httptest.NewRecorder()
+	handler.ServeHTTP(snapshotResponse, snapshotRequest)
+
+	if snapshotResponse.Code != http.StatusOK {
+		t.Fatalf("snapshot status = %d, body %s", snapshotResponse.Code, snapshotResponse.Body)
+	}
+
+	var snapshot protocol.Snapshot
+
+	err := json.NewDecoder(snapshotResponse.Body).Decode(&snapshot)
+	if err != nil || snapshot.Generation == "" {
+		t.Fatalf("snapshot = %+v, decode error %v", snapshot, err)
+	}
+}
+
+func expectError(
+	t *testing.T, response *httptest.ResponseRecorder, status int, code string,
+) {
+	t.Helper()
+
+	var body protocol.ErrorResponse
+
+	err := json.NewDecoder(response.Body).Decode(&body)
+	if response.Code != status || err != nil || body.Error != code || body.Message == "" {
+		t.Fatalf("response = %d %+v, decode error %v", response.Code, body, err)
+	}
+}
+
 func TestJSONRequests(t *testing.T) {
 	t.Parallel()
 

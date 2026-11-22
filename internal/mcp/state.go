@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -37,7 +38,9 @@ type state struct {
 func (svc *service) load(ctx context.Context) (*state, error) {
 	snapshot, err := svc.ledger.Snapshot(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("read the ledger: %w", err)
+		slog.ErrorContext(ctx, "Could not read the ledger for an MCP tool", slog.Any("error", err))
+
+		return nil, fail("The ledger could not be read. Nothing was recorded; try again.")
 	}
 
 	if snapshot.Settings == nil {
@@ -46,7 +49,9 @@ func (svc *service) load(ctx context.Context) (*state, error) {
 
 	today, err := ledger.Today(snapshot.Settings.TimeZone, svc.now().Unix())
 	if err != nil {
-		return nil, fmt.Errorf("calculate today: %w", err)
+		slog.ErrorContext(ctx, "Could not calculate today for an MCP tool", slog.Any("error", err))
+
+		return nil, fail("The ledger could not be read. Nothing was recorded; try again.")
 	}
 
 	return &state{
@@ -177,14 +182,18 @@ func (svc *service) write(
 
 		op, err := svc.operation(st, edit)
 		if err != nil {
-			return nil, err
+			slog.ErrorContext(ctx, "Could not encode an MCP change", slog.Any("error", err))
+
+			return nil, fail("The change could not be recorded. Check the ledger before retrying.")
 		}
 
 		response, err := svc.ledger.Apply(ctx, &protocol.OpsRequest{
 			Items: []protocol.OpsItem{{Deps: []string{}, Op: *op}},
 		}, ledger.SourceAgent)
 		if err != nil {
-			return nil, fmt.Errorf("commit the change: %w", err)
+			slog.ErrorContext(ctx, "Could not commit an MCP change", slog.Any("error", err))
+
+			return nil, fail("The change could not be recorded. Check the ledger before retrying.")
 		}
 
 		if len(response.Results) != 1 {

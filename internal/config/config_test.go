@@ -19,6 +19,56 @@ func baseEnv(extra map[string]string) map[string]string {
 	return env
 }
 
+func TestDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(t.Context(), envconfig.MapLookuper(baseEnv(nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.ListenAddr != ":8080" || cfg.DBPath != "./family-tab.db" || cfg.BackupDir != "" ||
+		cfg.OIDCClientSecret != "" || cfg.MCPClientID != "" ||
+		cfg.MCPAudience != "https://tab.example/mcp" || cfg.LogLevel.String() != "INFO" ||
+		cfg.BackupInterval.String() != "6h0m0s" || cfg.BackupKeep != 28 || cfg.CookieInsecure {
+		t.Fatalf("unexpected defaults: %+v", cfg)
+	}
+}
+
+func TestParseErrors(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]map[string]string{
+		"invalid log level":       {"LOG_LEVEL": "VERBOSE"},
+		"invalid backup interval": {"BACKUP_INTERVAL": "soon"},
+		"invalid backup keep":     {"BACKUP_KEEP": "many"},
+		"invalid cookie insecure": {"COOKIE_INSECURE": "yes"},
+	}
+
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := load(t.Context(), envconfig.MapLookuper(baseEnv(extra)))
+			if err == nil {
+				t.Fatal("expected a config error")
+			}
+		})
+	}
+
+	t.Run("missing required value", func(t *testing.T) {
+		t.Parallel()
+
+		env := baseEnv(nil)
+		delete(env, "BUYER_SUBJECT")
+
+		_, err := load(t.Context(), envconfig.MapLookuper(env))
+		if err == nil {
+			t.Fatal("expected a config error for a missing required value")
+		}
+	})
+}
+
 func TestMCPAudience(t *testing.T) {
 	t.Parallel()
 

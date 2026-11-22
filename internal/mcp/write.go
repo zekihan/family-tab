@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -607,7 +608,10 @@ func (svc *service) checkUndo(ctx context.Context, target *undoTarget, recordID 
 
 	createdAt, found, err := svc.ledger.CreatedAt(ctx, target.version, target.recordType, recordID)
 	if err != nil {
-		return fail("The record's history could not be checked: %v", err)
+		slog.ErrorContext(ctx, "Could not check an MCP undo history", slog.Any("error", err))
+
+		return fail("The record's history could not be checked. " +
+			"The buyer can correct it in the app.")
 	}
 
 	if !found {
