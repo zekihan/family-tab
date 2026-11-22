@@ -1,4 +1,4 @@
-import { formatTRY } from "../ledger/index.ts";
+import { formatTRY, isValidDate } from "../ledger/index.ts";
 import type { LedgerRecord, Operation, PaymentChip, StatusChip } from "../types.ts";
 import type { ReviewItem } from "../data/index.ts";
 
@@ -17,6 +17,22 @@ const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 export function displayDate(date: string) {
   const [year, month, day] = date.split("-").map(Number);
   return `${day} ${months[month - 1]} ${year}`;
+}
+
+/** Formats YYYY-MM-DD as the day-first field value DD.MM.YYYY. */
+export function dateInputText(date: string) {
+  const [year, month, day] = date.split("-");
+  return date ? `${day}.${month}.${year}` : "";
+}
+
+/** Parses DD.MM.YYYY (also D.M.YYYY, with / or - separators) or YYYY-MM-DD; null when not a real date. */
+export function parseDateInput(text: string): string | null {
+  const value = text.trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const dayFirst = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(value);
+  const date = iso ? value
+    : dayFirst ? `${dayFirst[3]}-${dayFirst[2].padStart(2, "0")}-${dayFirst[1].padStart(2, "0")}` : null;
+  return date && isValidDate(date) ? date : null;
 }
 
 export function purchaseDate(entered: string | null, today: string, due: string | null) {

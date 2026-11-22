@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from "react";
 import type { FamilyTabStore, SaveResult, StoreSnapshot } from "../data/index.ts";
 import { formatTRY, parseAmount } from "../ledger/index.ts";
 import type { LedgerRecord, Records } from "../types.ts";
-import { displayDate } from "./presentation.ts";
+import { dateInputText, displayDate, parseDateInput } from "./presentation.ts";
 
 export const LedgerContext = createContext<{
   store: FamilyTabStore;
@@ -115,9 +115,50 @@ export function AmountField({ label, value, onChange }: { label: string; value: 
 export function DateField({ label, value, onChange, min, max }: {
   label: string; value: string; onChange: (value: string) => void; min?: string; max?: string;
 }) {
-  return <label className="field">{label}
-    <input type="date" required value={value} min={min} max={max} onChange={event => onChange(event.target.value)} />
-  </label>;
+  const id = useId();
+  const hint = `${id}-hint`;
+  const input = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState(() => dateInputText(value));
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setText(dateInputText(value));
+  }, [value, editing]);
+  const parsed = parseDateInput(text);
+  const error = !text ? "Enter a date." : !parsed ? "Enter the date as day.month.year."
+    : min && parsed < min ? `Choose ${displayDate(min)} or later.`
+      : max && parsed > max ? `Choose ${displayDate(max)} or earlier.` : "";
+  useEffect(() => {
+    input.current?.setCustomValidity(error);
+  }, [error]);
+  return <div className="field"><label htmlFor={id}>{label}</label>
+    <div className="date-input">
+      <input ref={input} id={id} required className="num" inputMode="numeric" autoComplete="off" placeholder="DD.MM.YYYY"
+        value={text} aria-describedby={hint} aria-invalid={!!text && !!error}
+        onFocus={() => setEditing(true)}
+        onBlur={() => {
+          setEditing(false);
+          if (parsed) setText(dateInputText(parsed));
+        }}
+        onChange={event => {
+          setText(event.target.value);
+          const next = parseDateInput(event.target.value);
+          if (next) onChange(next);
+        }} />
+      <span className="date-picker" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+          <rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" />
+        </svg>
+        <input type="date" tabIndex={-1} value={value} min={min} max={max}
+          onClick={event => {
+            try { event.currentTarget.showPicker(); } catch { /* The tap opens the native picker. */ }
+          }}
+          onChange={event => {
+            if (event.target.value) onChange(event.target.value);
+          }} />
+      </span>
+    </div>
+    <span id={hint} className="hint" aria-live="polite">{text && error ? error : parsed ? displayDate(parsed) : "Day.month.year"}</span>
+  </div>;
 }
 
 export function Chip({ children, selected, onClick }: { children: ReactNode; selected?: boolean; onClick: () => void }) {

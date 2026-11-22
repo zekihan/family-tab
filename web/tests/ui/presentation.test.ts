@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { patchBetween, purchaseDate, statusText } from "../../src/ui/presentation.ts";
+import { dateInputText, parseDateInput, patchBetween, purchaseDate, statusText } from "../../src/ui/presentation.ts";
 
 test("auto-backdates an untouched purchase date without pinning it after a plan change", () => {
   assert.deepEqual(purchaseDate(null, "2026-11-22", "2026-09-30"), {
@@ -30,4 +30,19 @@ test("status chips use ledger formatting and readable calendar dates", () => {
   assert.equal(statusText({ kind: "dueByToday", amountMinor: 1250, behindPlan: true }), "12,50 TL due by today");
   assert.equal(statusText({ kind: "allPaid", behindPlan: false }), "All paid");
   assert.equal(statusText({ kind: "whenTheyCan", behindPlan: false }), "When they can");
+});
+
+test("date fields read and write day-first dates", () => {
+  assert.equal(dateInputText("2026-12-05"), "05.12.2026");
+  assert.equal(dateInputText(""), "");
+  assert.equal(parseDateInput("05.12.2026"), "2026-12-05");
+  assert.equal(parseDateInput(" 5.12.2026 "), "2026-12-05");
+  assert.equal(parseDateInput("5/2/2028"), "2028-02-05");
+  assert.equal(parseDateInput("2026-12-05"), "2026-12-05");
+  assert.equal(parseDateInput("29.02.2028"), "2028-02-29");
+  assert.equal(parseDateInput("29.02.2027"), null);
+  assert.equal(parseDateInput("31.04.2026"), null);
+  assert.equal(parseDateInput("12/15/2026"), null);
+  assert.equal(parseDateInput("5.12.26"), null);
+  assert.equal(parseDateInput(""), null);
 });
