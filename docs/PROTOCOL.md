@@ -19,7 +19,9 @@ This document fixes the shapes that the Go server, the TypeScript client and the
 type DateString = string; // YYYY-MM-DD
 
 interface Settings { id: "ledger"; timeZone: string; currency: "TRY"; version: string }
-interface Person { id; name; payday: number | null; archived: boolean; version }
+type Source = "app" | "agent";
+
+interface Person { id; name; payday: number | null; aliases: string[]; archived: boolean; version }
 interface Purchase {
   id; personId; item; totalMinor: number; boughtOn: DateString;
   plan: "once" | "installments";
@@ -27,10 +29,10 @@ interface Purchase {
   count: number | null;         // installments only, else null
   firstDue: DateString | null;  // installments only, else null
   dueDay: number | null;        // installments only, 1..31, else null
-  note: string | null; version;
+  note: string | null; source: Source; version;
 }
-interface Payment { id; personId; amountMinor; paidOn: DateString; note: string | null; version }
-interface Refund  { id; purchaseId; amountMinor; refundedOn: DateString; note: string | null; version }
+interface Payment { id; personId; amountMinor; paidOn: DateString; note: string | null; source: Source; version }
+interface Refund  { id; purchaseId; amountMinor; refundedOn: DateString; note: string | null; source: Source; version }
 interface Payout  { id; personId; amountMinor; paidOutOn: DateString; note: string | null; version }
 
 interface Records {
@@ -38,6 +40,8 @@ interface Records {
   people: Person[]; purchases: Purchase[]; payments: Payment[]; refunds: Refund[]; payouts: Payout[];
 }
 ```
+
+`aliases` is always present, `[]` when none, and is patchable like `name`. `source` is set by the server when it commits a create: `app` for operations on `/api/sync/ops`, `agent` for operations made by the MCP tools. A restore keeps `source` from the backup records as given. The TypeScript client sets `source: "app"` on its optimistic local copy of a record it creates.
 
 ## 3. Operations
 
@@ -58,8 +62,8 @@ type Operation = {
 );
 ```
 
-- `create.record` is the full record without `version`; its `id` equals `recordId`.
-- `update.patch` holds only changed fields. `id`, `version` and `refund.purchaseId` are not patchable. `settings.currency` is not patchable. Setting an optional field to `null` clears it.
+- `create.record` is the full record without `version` and, for purchases, payments and refunds, without `source`; its `id` equals `recordId`.
+- `update.patch` holds only changed fields. `id`, `version`, `source` and `refund.purchaseId` are not patchable. `settings.currency` is not patchable. Setting an optional field to `null` clears it.
 - `delete.preImage` is the full record as it was, including its `version`, so Undo works after a reload. Settings cannot be deleted.
 - Archiving a person is `update` with `{archived: true}`. Setup is `create` of `settings` with `recordId: "ledger"`, allowed only when no settings exist.
 
@@ -83,11 +87,12 @@ type ReceiptCode =
   | "conflict"               // baseVersion differs from the record's current version, or the record is gone
   | "not_found"              // a referenced record does not exist
   | "duplicate_id"           // create with an ID that already exists
-  | "invalid"                // a record rule failed (bad field, date in the future, etc.)
+  | "invalid"                // a record rule failed (bad field, date in the future, `source` sent by a client, etc.)
   | "refunds_exceed_total"
   | "archived_person"        // new or moved purchase on an archived person
   | "purchase_has_refunds"   // delete of a purchase with refunds
   | "person_has_records"     // delete of a person still referenced
+  | "alias_conflict"         // a person's alias or name matches another person's name or alias (section 8)
   | "payout_exceeds_credit"  // new, increased or moved payout above available credit
   | "not_setup";             // any operation other than settings create before setup
 ```
@@ -106,6 +111,7 @@ Unauthenticated endpoints:
 | `GET /auth/login` | Starts the OIDC flow, sets the transaction cookie (path `/auth/callback`, 10 minutes), redirects to the provider |
 | `GET /auth/callback` | Completes the flow, consumes the transaction, sets the session cookie, redirects to `/` |
 | `POST /api/logout` | Revokes the session named by the cookie if any, clears the cookie, always `204`, even when the session was already missing or expired |
+| `GET /.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` | OAuth protected resource metadata for `/mcp`, no header needed |
 
 Authenticated endpoints (without a valid session, `401` with error code `unauthenticated`):
 
@@ -116,6 +122,14 @@ Authenticated endpoints (without a valid session, `401` with error code `unauthe
 | `POST /api/sync/receipts` | `{ "opIds": string[] }` | `{ "generation": string, "receipts": Receipt[] }` (only IDs with a stored receipt, including applied restores) |
 | `POST /api/sync/ops` | `{ "items": [{ "op": Operation, "deps": string[] }] }` | `{ "generation": string, "results": OpResult[] }` in request order |
 | `POST /api/restore` | `{ "opId": string, "expectedRevision": number, "backup": BackupFile }` | `RestoreResult` |
+
+`/mcp` (MCP over streamable HTTP, section 9) is not part of `/api`:
+
+- It exists only when the environment variable `MCP_CLIENT_ID` is set. `MCP_AUDIENCE` defaults to `PUBLIC_URL + "/mcp"`.
+- It needs no `X-Family-Tab` header. It requires `Authorization: Bearer <JWT>` and answers a missing or bad token with `401` and `WWW-Authenticate: Bearer resource_metadata="<PUBLIC_URL>/.well-known/oauth-protected-resource"`, plus `error="invalid_token"` when a token was present.
+- The metadata document is `{ "resource": MCP_AUDIENCE, "authorization_servers": [OIDC_ISSUER], "bearer_methods_supported": ["header"], "scopes_supported": ["openid", "offline_access"] }`.
+- Token checks: signature against the issuer's JWKS, algorithm `RS256` only, `iss` equals the issuer, `aud` contains `MCP_AUDIENCE`, `exp` in the future (small skew), sane `nbf` and `iat`, `client_id` (or `azp`) equals `MCP_CLIENT_ID`, and (`iss`, `sub`) is the buyer. The `typ` header, when present, must be `at+jwt` or `application/at+jwt`. Tokens with a `nonce` claim (ID tokens) are rejected.
+- The session cookie is not accepted on `/mcp`, and bearer tokens are not accepted on `/api`.
 
 ```ts
 interface Snapshot extends Records { generation: string; revision: number }
@@ -162,7 +176,7 @@ interface UnappliedOperation {
 }
 ```
 
-All six collections must be present as arrays, even when empty. Each record must have exactly the fields shown in section 2, with `version` optional on import. Nullable fields must be present. A restore sets every record version to its operation ID.
+All six collections must be present as arrays, even when empty. Each record must have exactly the fields shown in section 2 (including `aliases`, and `source` which must be `app` or `agent`), with `version` optional on import. Backups stay `formatVersion: 1`. Nullable fields must be present. A restore sets every record version to its operation ID.
 
 An unapplied entry requires `order`, `op`, `dependencies` and `reason`. Only `reason` may be null. Order is a nonnegative safe integer. Operation IDs must be unique, and dependencies must refer to unapplied operations with lower order. Each operation needs a generation, an RFC 3339 UTC `createdAt` and the payload for its kind. Updates and deletes need a non-empty `baseVersion`. If present, `alreadyReturned` must be a boolean on a payout.
 
@@ -176,17 +190,17 @@ interface LedgerFixture {
   description: string;      // which DESIGN.md example or table row it covers
   timeZone: string;
   today: DateString;
-  records: Omit<Records, "settings">; // `version` may be omitted
+  records: Omit<Records, "settings">; // `version` may be omitted; `aliases` defaults to [] and `source` to "app"
   expect: {
     valid?: true | { code: ReceiptCode };  // record rules over the whole ledger (Go and TS)
     schedules?: { [purchaseId: string]: ScheduledAmount[] };   // Go and TS
-    people?: { [personId: string]: Partial<PersonBalance> };   // Go: netReceipts, credit, cashShortfall, paymentsReceived, cashReturned; TS: all
-    home?: Partial<HomeTotals>;                                // TS only
-    comingUp?: ComingUpEntry[];                                // TS only
-    chips?: { [personId: string]: StatusChip };                // TS only
-    paymentChips?: { [personId: string]: PaymentChip[] };      // TS only
-    homeOrder?: string[];                                      // TS only
-    purchases?: { [purchaseId: string]: Partial<PurchaseView> }; // TS only, PurchaseView from web/src/ledger/index.ts
+    people?: { [personId: string]: Partial<PersonBalance> };   // Go and TS
+    home?: Partial<HomeTotals>;                                // Go and TS
+    comingUp?: ComingUpEntry[];                                // Go and TS
+    chips?: { [personId: string]: StatusChip };                // Go and TS
+    paymentChips?: { [personId: string]: PaymentChip[] };      // Go and TS
+    homeOrder?: string[];                                      // TS only, locale collation
+    purchases?: { [purchaseId: string]: Partial<PurchaseView> }; // Go and TS, PurchaseView from web/src/ledger/index.ts
   };
 }
 
@@ -213,6 +227,8 @@ type StatusChip =
 interface PaymentChip { kind: "dueByToday" | "throughNextDue" | "everything"; amountMinor: number; shortfallMinor: number }
 ```
 
+Go checks every `expect` key except `homeOrder`, using `ledger.View` and `ledger.PaymentChips`.
+
 Amount parsing cases live in `testdata/amounts.json` as `[{ "input": string, "minor": number | null }]`, where `null` means rejected. Both languages run every case.
 
 Change-rule cases live in `testdata/changes/*.json`:
@@ -220,11 +236,26 @@ Change-rule cases live in `testdata/changes/*.json`:
 ```ts
 interface ChangeFixture {
   name: string; description: string; timeZone: string; today: DateString;
-  records: Omit<Records, "settings">;
+  records: Omit<Records, "settings">; // same defaults as ledger fixtures
   op: Operation;           // applied on top of `records`
   expect: { status: "applied" } | { status: "rejected"; code: ReceiptCode };
 }
 ```
+
+Name normalization cases live in `testdata/names.json` as `[{ "input": string, "normalized": string }]`. Both languages run every case.
+
+Add-purchase default cases live in `testdata/defaults.json` as an array of:
+
+```ts
+interface DefaultsFixture {
+  today: DateString;
+  payday: number | null;
+  shortcuts: DueShortcuts;   // the payday, end of month and in two weeks dates
+  installmentStart: { firstDue: DateString; dueDay: number };
+}
+```
+
+Both languages run every case against `firstPaydayOnOrAfter`, `dueShortcuts` and `defaultInstallmentStart`. The cases cover month ends, payday 29, 30 and 31, February in leap and non-leap years, payday equal to today's day, and a null payday.
 
 Go runs every change fixture through the server commit path. TypeScript runs the subset its client-side save checks cover.
 
@@ -245,6 +276,15 @@ Where DESIGN.md leaves a detail open, both implementations and the fixtures foll
 - **Payment chips**, in this order, each only when its amount is positive: `dueByToday` = cash shortfall + Due by today; `throughNextDue` = cash shortfall + Due by today + the unpaid parts of every amount due on the earliest `dueOn` > today that is not fully paid (omitted when there is no such date); `everything` = Left to pay. `shortfallMinor` is the cash shortfall included in the chip's amount, the same value on all three. The default chip is the first one returned.
 - **PurchaseView** in the client: `leftMinor` = sum of unpaid parts of its adjusted amounts; `refundedMinor` = sum of its refunds; `earliestUnpaidDue` = earliest `dueOn` among its amounts that are not fully paid, or null. `payableCount` counts amounts still positive after refunds. `paidCount` counts those paid in full.
 
+### Names
+
+`normalizeName(s)` (Go `ledger.NormalizeName`, TypeScript `normalizeName` in `web/src/ledger`) is used for the alias rules and for person matching:
+
+1. Apply NFC, so composed and decomposed input agree (`s.normalize("NFC")` in TypeScript, `golang.org/x/text/unicode/norm` in Go).
+2. Trim Unicode `White_Space` and U+FEFF and collapse inner whitespace runs to one space.
+3. Turkish-aware lowercase: `I` to `ı`, `İ` to `i`, then Unicode lowercase of the rest.
+4. Fold `ç ğ ı ö ş ü â î û` to `c g i o s u a i u`, and strip a combining dot above (U+0307) left from decomposed input.
+
 ### Record rules
 
 Codes: a missing reference is `not_found`, a repeated ID is `duplicate_id` (IDs are unique across all record types), refunds above the price are `refunds_exceed_total`, and every other record rule is `invalid`.
@@ -256,6 +296,8 @@ Codes: a missing reference is `not_found`, a repeated ID is `duplicate_id` (IDs 
 - `boughtOn`, `paidOn`, `refundedOn` and `paidOutOn` are ≤ today. `dueDate` and `firstDue` are ≥ `boughtOn`. A refund's `refundedOn` is ≥ its purchase's `boughtOn`.
 - Once: `count`, `firstDue` and `dueDay` are null. Installments: `dueDate` is null, `count` is 2–120, `totalMinor` ≥ `count`, `dueDay` is 1–31, and `firstDue` has the day `min(dueDay, daysInMonth(firstDue))`.
 - Payday, when non-null, is an integer 1–31.
+- Aliases: at most 20 per person; each is 1–40 Unicode code points after trimming and not empty; no two aliases of one person normalize equal, and none normalizes equal to the person's own name. All are `invalid`. Stored aliases are trimmed (Unicode `White_Space` and U+FEFF) with inner whitespace runs collapsed to one ASCII space; case is preserved.
+- `source` is `app` or `agent`.
 
 ### Change rules and which records an operation checks
 
@@ -264,4 +306,50 @@ Codes: a missing reference is `not_found`, a repeated ID is `duplicate_id` (IDs 
 - A purchase that is created, or whose `personId` changes, must belong to an active person (`archived_person`). Other edits of a purchase on an archived person are allowed.
 - Deleting a purchase with refunds is `purchase_has_refunds`, with the refund IDs in `blocking`. Deleting a person referenced by any purchase, payment or payout is `person_has_records`, with those IDs in `blocking`.
 - A payout that is created, whose `amountMinor` increases, or whose `personId` changes must satisfy `amountMinor` ≤ the destination person's credit computed on the after-records without this payout, unless `alreadyReturned` is set (`payout_exceeds_credit`). Other changes, including corrections to purchases or payments that leave net receipts negative, are allowed and produce a cash shortfall.
+- `alias_conflict`: a change that creates a person or changes a person's `name` or `aliases` is rejected when a normalized alias or name of that person equals the normalized name or a normalized alias of a different person, archived included. `blocking` holds the other people's IDs. Name against name is not checked, so two people may share a name; only pairs involving at least one alias are.
+- A create whose `record` carries `source`, and a patch that carries `source`, are `invalid`. The server sets `source` from the commit path: `syncsvc.Service.Apply` takes a source argument (`ledger.SourceApp`, `ledger.SourceAgent`); the HTTP handler passes app and the MCP tools pass agent.
 - Settings: `create` only when none exist; `update` may change only `timeZone`. Every other operation before setup is `not_setup`.
+
+## 9. MCP tools
+
+Server name `family-tab`, official Go SDK, streamable HTTP transport (stateless where the SDK allows), mounted at `/mcp` (section 5). Every write tool builds a normal `Operation` (new UUIDv4 ID, current generation, `createdAt` now) and commits it through `syncsvc.Service.Apply` with source `agent`. A rejection is returned as a tool error carrying the receipt `code`, `reason` and `blocking`. Tools fail with a clear message before setup.
+
+- Amount inputs are strings parsed by `ParseAmount`. Every result echoes amounts both as integer kuruş (`...Minor`) and as formatted TRY strings, such as `"1.299,90 TL"`.
+- Dates are `YYYY-MM-DD`. "Today" is in the ledger time zone.
+- `personId` comes from `list_people` or `find_person`.
+- Tool descriptions are the agent's manual: units, defaults, where IDs come from, and the expectations in DESIGN.md section 7 (ask who and which plan per item, check duplicates first, an exact match is used directly, suggestions need a yes, offer to save new wordings as aliases).
+
+### Read tools
+
+| Tool | Parameters | Result |
+| --- | --- | --- |
+| `list_people` | none | Active and archived people: `id`, `name`, `aliases`, `payday`, `archived` |
+| `find_person` | `query` | `{ exact: Person \| null, suggestions: Person[] }` |
+| `get_balance` | `personId` | The person's `PersonBalance` figures, status chip and payment chips |
+| `get_statement` | `personId`, `includePaid?` (false), `since?` | The person's balance summary and purchases |
+| `get_overview` | none | Each active person's balance summary and `HomeTotals` |
+| `coming_up` | none | `ComingUpEntry` list with person and item names |
+| `find_purchases` | `query?`, `personId?`, `since?`, `until?` | Matching purchases |
+| `check_purchases` | `items: [{ item, price, boughtOn }]` | Per input item, possible duplicates |
+
+- `find_person`: `exact` is the single person whose normalized name or any normalized alias equals `normalizeName(query)`. `suggestions` is filled only when there is no exact match: people where the normalized query (3 or more characters) is a prefix of a normalized name or alias, or of any space-separated word in it; or within Damerau-Levenshtein distance 1 of one (both sides 4 or more characters); or distance 2 (both 8 or more). Ordered by distance, then name. Archived people are included and flagged.
+- `get_statement`: purchases with `leftMinor` > 0, or all with `includePaid`. Each has `id`, `item`, `boughtOn`, `plan`, `totalMinor`, `refundedMinor`, `leftMinor`, `source`, `note` and `installments`: the adjusted schedule with `dueOn`, `adjustedMinor`, `paidMinor`, `remainingMinor` and `overdue` (`dueOn` before today and `remainingMinor` > 0). Only unpaid installments are listed unless `includePaid`. `since` filters on `boughtOn`.
+- `get_overview`: sorted by Due by today descending, Left to pay descending, then name by `normalizeName`, then ID.
+- `find_purchases`: each has `item`, the person, `boughtOn`, `totalMinor`, `refundedMinor`, `refundableMinor` (`totalMinor` minus refunds), `leftMinor` and `source`. `query` matches as a substring of the normalized item. At most 50, newest `boughtOn` first.
+- `check_purchases`: for each input item, existing purchases of any person with the same `totalMinor` and a `boughtOn` within 3 days either way, with the person's name and the item.
+
+### Write tools
+
+| Tool | Parameters | Result |
+| --- | --- | --- |
+| `add_purchase` | `personId`, `item`, `price`, `boughtOn?` (today), `plan?` (`once`), `dueDate?`, `count?` (6), `firstDue?`, `lastDayOfMonth?`, `note?` | The created purchase with its schedule and the person's new balance |
+| `record_payment` | `personId`, `amount`, `paidOn?` (today), `note?` | The payment and the person's new balance |
+| `add_refund` | `purchaseId`, `amount`, `refundedOn?` (today), `note?` | The refund and the purchase's new view |
+| `add_alias` | `personId`, `alias` | The updated person |
+| `remove_alias` | `personId`, `alias` | The updated person |
+| `undo` | `recordId` | Confirmation of the deletion |
+
+- `add_purchase`: `plan` is `once` or `installments`. For `once`, `dueDate` is a date or `payday`, `endOfMonth` or `inTwoWeeks`, default none. For `installments`, `count` defaults to 6 and `firstDue` defaults to `defaultInstallmentStart`; an explicit `firstDue` sets `dueDay` to its day, unless it is a month's last day and `lastDayOfMonth` is true, which sets `dueDay` to 31.
+- `add_alias` and `remove_alias` change the person's `aliases` with an `update` operation, so the alias rules and `alias_conflict` apply. `remove_alias` matches by `normalizeName`. Their descriptions tell the agent to ask the buyer first.
+- `undo` deletes a purchase, payment or refund with a normal delete operation (so `purchase_has_refunds` still applies), and only when `source` is `agent`, the record's `version` equals the ID of its create operation (unchanged since creation), and that operation's receipt `created_at` is within the last 24 hours. Otherwise it returns a tool error saying why.
+- No tool records payouts, edits or deletes other records, creates, renames, archives or deletes people, changes settings or restores.

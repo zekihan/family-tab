@@ -24,6 +24,7 @@ Goals:
 4. Partial payments and overpayments work at the person level. The ledger also accounts for shop refunds and cash returned to a family member.
 5. Works on a phone, which is where purchases happen.
 6. After initial SSO sign-in and download, the buyer can use the ledger offline. Changes sync to the server when a connection returns, and the buyer can open the same ledger on another device.
+7. The buyer can hand a screenshot of shop orders or a message like "dad sent 5000 TL" to their own chat agent, which records it and answers balance questions through the [agent interface](#agent-access-mcp). The app stays the place to review and correct.
 
 Non-goals (v1):
 
@@ -31,7 +32,8 @@ Non-goals (v1):
 - Real money movement, bank linking, or payment requests.
 - Strict due-date enforcement, reminders that nag, or "late" shaming.
 - Family accounts, shared access, and multi-user editing.
-- Importing orders automatically from shops (see roadmap).
+- Importing orders automatically from shops (see roadmap). The agent interface records only what the buyer tells their chat agent, one confirmed item at a time.
+- Agent access for anyone but the buyer, and agent changes to payouts, settings, people or restores.
 
 ## 3. Users and use cases
 
@@ -70,6 +72,7 @@ erDiagram
         string id
         string name
         int payday "day of month, optional"
+        string[] aliases "other wordings, up to 20"
         bool archived
     }
     PURCHASE {
@@ -84,6 +87,7 @@ erDiagram
         date firstDue "installments only"
         int dueDay "installments only, monthly anchor"
         string note "optional"
+        enum source "app | agent"
     }
     PAYMENT {
         string id
@@ -91,6 +95,7 @@ erDiagram
         int amountMinor
         date paidOn
         string note "optional"
+        enum source "app | agent"
     }
     REFUND {
         string id
@@ -98,6 +103,7 @@ erDiagram
         int amountMinor
         date refundedOn
         string note "optional"
+        enum source "app | agent"
     }
     PAYOUT {
         string id
@@ -120,6 +126,8 @@ Key decisions:
 - **One ledger per deployment.** The `LEDGER` record holds settings and sync metadata. Every stored record also carries a `version` used by sync (section 7). Scheduled amounts are derived and never stored.
 - **The app derives a base schedule and an adjusted schedule.** The base schedule uses `totalMinor`, `count`, `firstDue` and `dueDay`. A one-time purchase produces a single scheduled amount with an optional date. The adjusted schedule accounts for shop refunds. The base schedule remains visible in purchase history.
 - **Payments and payouts belong to a person.** A payment records money received from that person. A payout records money returned to them. A shop refund belongs to a purchase and can be recorded separately from any payout.
+- **Aliases.** A person can carry up to 20 aliases: other wordings the buyer uses for them, such as "Anne", "Mom" or a nickname. They exist only so the agent can match a name to a person. They never appear in balances.
+- **Record source.** Purchases, payments and shop refunds carry `source`, `app` or `agent`. The server sets it from the channel that created the record. It is never edited, and the app shows a small "via agent" tag on records created by the agent.
 - **V1 uses TRY.** Store positive integer amounts in kuruş, capped per entry by the [validation rules](#validation-rules).
 - **Household purchases** can use a regular person entry named "Household". The amount appears under Household and in Home totals and does not affect any individual's balance.
 - **Dates are calendar dates** stored as `YYYY-MM-DD`. Store one ledger time zone, defaulting to the buyer's time zone at setup and editable in settings. All devices use it for today and date shortcuts. Changing it changes only what counts as today. Stored dates stay as they are. Purchase, payment, shop refund and payout dates can be backdated but cannot be in the future. Due dates and refund dates must be on or after the purchase date. Payday, when set, is a day from 1 through 31.
@@ -222,9 +230,9 @@ A payday change synced from another device leaves the selected shortcut date and
 ### Person page
 
 - Show **Due by today**, **Left to pay**, **Payments received**, **Cash returned**, and any positive **Credit**. Itemize any cash shortfall under Left to pay.
-- Offer **Record a payment** as the primary action. Offer **Add purchase** for active people and **Record cash returned** when there is credit and no pending-undo deletion affects them. **Edit person** changes the name and payday; payday changes affect only defaults for new purchases.
+- Offer **Record a payment** as the primary action. Offer **Add purchase** for active people and **Record cash returned** when there is credit and no pending-undo deletion affects them. **Edit person** changes the name, payday and aliases; payday changes affect only defaults for new purchases. Aliases appear as removable chips with an input to add one, and the shared validation rules show errors inline. Add purchase may also set aliases when it creates a person; they are optional.
 - Purchases appear newest first. Each card shows the item, original total, refunds, plan, progress, amount left and earliest unpaid dated amount. Installment progress counts only installments with a positive amount after refunds. Show fully refunded installments separately. **Show dates** includes both schedules. The card offers Edit, Delete and Record shop refund where applicable.
-- Show incoming payments and payouts in dated history, newest first. Offer Edit and Delete on both.
+- Show incoming payments and payouts in dated history, newest first. Offer Edit and Delete on both. Purchase, payment and shop refund rows, and their edit views, show a small "via agent" tag when `source` is `agent`.
 - **Archive person** explains any outstanding balance before confirmation and preserves their records. The archive allows payments, shop refunds, and payouts. Unarchive the person before adding a purchase to their ledger or moving one to it. A person with no records shows only **Delete person** in place of the archive or unarchive action. That deletion is permanent and has the usual undo window.
 
 ### Record a payment
@@ -286,6 +294,19 @@ A payday change synced from another device leaves the selected shortcut date and
 7. **After a restore.** Compare generations only for equality. An operation created against, or committed in, a generation other than the current one is dropped when the snapshot already reflects it: a create or update when the record has the intended content, a deletion when the record is absent. This happens when the restored backup already included it. Otherwise it goes to restore review, where reapplying keeps the original record ID and uses the current record version as its base.
 8. **Sign-out.** After sign-out, discard any in-flight results from the signed-out session.
 
+### Agent access (MCP)
+
+Purpose: the buyer talks to their own chat agent (Claude) and the agent reads and writes the ledger through a Model Context Protocol server on the same origin. Typical uses: the buyer shares a screenshot of shop orders, and the agent asks per item who it is for and whether it is paid once or in installments, then records the purchases; the buyer says "dad sent 5000 TL" and the agent records a payment; the buyer asks for a balance or an itemized statement.
+
+- **Same rules.** Every agent write is a normal operation committed by the server, so validation, receipts, revisions and server backups are the same as for the app. A rejection is returned to the agent with its code, reason and blocking records.
+- **Access.** Only the configured buyer, signed in through the same OIDC provider, can use it. It is disabled unless a client ID is configured. See [PROTOCOL.md](PROTOCOL.md) section 5 and [DEPLOYMENT_MCP.md](DEPLOYMENT_MCP.md).
+- **Allowed writes.** Purchases, payments, shop refunds and aliases only. The agent can never record payouts, edit or delete existing records, create, rename, archive or delete people, change settings or restore. The one deletion it has is Undo.
+- **Person matching.** An exact match on the normalized name or alias (section 8, Names) is used directly. Anything else is only a suggestion, and the agent must get the buyer's yes before using it. When the buyer confirms a wording that did not match, the agent offers to save it as an alias and adds it only after a yes. The agent never creates people.
+- **Ask before writing.** For each purchase the agent asks who it is for and once or installments unless the buyer already said. It states what it will record and defaults it uses (today as the purchase date, 6 installments, first due date from the person's payday) and does not guess a missing person or plan.
+- **Duplicate check.** Before recording purchases from a screenshot, the agent checks for an existing purchase for anyone with the same price and a date within 3 days, and tells the buyer about each hit before recording.
+- **Undo.** The agent can delete a record it created only when it is an agent record, has not been edited since creation, and was created less than 24 hours ago. A purchase with shop refunds still cannot be deleted. Anything else is corrected in the app.
+- **Reads.** People with aliases, a person's balance and itemized statement, the overview of everyone, Coming up, and purchase search. Figures match the app because the server uses the same balance rules in Go (section 5).
+
 ### Backup and restore
 
 - **Export** a versioned JSON file with TRY, the ledger time zone, people, purchases, payments, shop refunds and payouts. Include pending changes reflected in the local ledger and allow export offline. Pending-undo deletions are exported as applied. List operations that need review in a separate unapplied section, with their kind, target ID, payload or pre-image, base version, generation, order and dependencies, and keep them available for review until resolved. Back up the server database separately for recovery after server data loss.
@@ -307,6 +328,8 @@ The client checks these on save, and the server checks them on every operation. 
 Record rules, also checked on every record in a restore:
 
 - The ledger time zone is a valid IANA name and the currency is TRY. Person names and purchase items are non-empty after trimming. Payday, when set, is from 1 through 31.
+- A person has at most 20 aliases, each 1 to 40 characters after trimming. No two aliases of one person, and no alias and that person's own name, are equal after [normalization](#names).
+- `source` is `app` or `agent` on every purchase, payment and refund.
 - Amounts are positive whole kuruş, at most 100,000,000 TL per entry. At that cap, totals stay within JavaScript's safe integers for any realistic ledger.
 - New or changed purchase, payment, refund and payout dates cannot be in the future. Restore checks every such date. Due dates and refund dates are on or after the purchase date.
 - A one-time purchase has no installment fields. An installment purchase has a count from 2 to 120, each installment at least one kuruş, and `firstDue` equal to `dueDay` clamped to its month.
@@ -320,6 +343,12 @@ Change rules, checked only on operations and never against restored records, so 
 - A purchase with refunds cannot be deleted.
 - A payout that is new, increased or moved fits the destination person's credit computed without that payout, unless the operation carries `alreadyReturned`.
 - A person can be deleted only when no purchase, payment or payout references them at commit time.
+- A person's normalized alias or name cannot equal the normalized name or alias of a different person, archived people included, when a change creates the person or changes their name or aliases. Two people can still share a name.
+- `source` is set by the server, so operations that carry it are invalid.
+
+### Names
+
+Normalization is used for alias rules and agent person matching: trim whitespace, collapse inner whitespace to one space, lowercase with Turkish rules (`I` to `ı`, `İ` to `i`), then fold `ç ğ ı ö ş ü â î û` to `c g i o s u a i u`. Composed and decomposed input agree. So "ÇAĞLA", "Cagla" and "çağla" match.
 
 ### Parsing amounts
 

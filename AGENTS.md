@@ -6,6 +6,7 @@ Guidance for AI agents working in this repository.
 
 - `docs/DESIGN.md` — product and behavior design. The source of truth for rules.
 - `docs/TECH_STACK.md` — technology choices.
+- `docs/DEPLOYMENT_MCP.md` — homelab configuration for agent access (MCP).
 - `docs/PROTOCOL.md` — wire types, API, backup file and fixture formats. Go
   (`internal/ledger/types.go`, `internal/protocol`) and TypeScript
   (`web/src/types.ts`) must match it exactly.
@@ -17,11 +18,12 @@ Guidance for AI agents working in this repository.
 | `main.go` | Entry point: config, database, auth, sync service, HTTP server, backups |
 | `cmd/ledgercalc` | Go runner for the differential test |
 | `internal/config` | Environment configuration |
-| `internal/ledger` | Pure Go balance and validation rules (no I/O) |
+| `internal/ledger` | Pure Go balance, view, defaults and validation rules (no I/O) |
 | `internal/protocol` | Sync and backup wire types |
 | `internal/store` | SQLite schema, migrations, ledger rows, receipts |
 | `internal/syncsvc` | Operation commit path, snapshots, restore |
 | `internal/auth` | OIDC sign-in, sessions, auth middleware |
+| `internal/mcp` | MCP server: agent tools over the ledger, mounted at `/mcp` |
 | `internal/server` | HTTP routing, API handlers, SPA serving |
 | `internal/backup` | Periodic `VACUUM INTO` database copies |
 | `web/src/types.ts` | Shared TypeScript types |
