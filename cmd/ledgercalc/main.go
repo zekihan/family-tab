@@ -29,11 +29,13 @@ type schedules struct {
 }
 
 type result struct {
-	Schedules map[string]schedules            `json:"schedules"`
-	People    map[string]ledger.PersonBalance `json:"people"`
-	Valid     *string                         `json:"valid"`
-	Changes   []changeResult                  `json:"changes"`
-	Amounts   []*int64                        `json:"amounts"`
+	Schedules    map[string]schedules            `json:"schedules"`
+	People       map[string]ledger.PersonBalance `json:"people"`
+	View         *ledger.LedgerView              `json:"view"`
+	PaymentChips map[string][]ledger.PaymentChip `json:"paymentChips"`
+	Valid        *string                         `json:"valid"`
+	Changes      []changeResult                  `json:"changes"`
+	Amounts      []*int64                        `json:"amounts"`
 }
 
 type changeResult struct {
@@ -83,12 +85,19 @@ func calculate(input *calcCase) (result, error) {
 		TimeZone: input.TimeZone,
 		Version:  "fixture",
 	}
+	view := ledger.View(&records, input.Today)
 	got := result{
-		Schedules: make(map[string]schedules, len(records.Purchases)),
-		People:    ledger.Balances(&records),
-		Valid:     code(ledger.ValidateRecords(&records, input.Today)),
-		Changes:   make([]changeResult, len(input.Changes)),
-		Amounts:   make([]*int64, len(input.Amounts)),
+		Schedules:    make(map[string]schedules, len(records.Purchases)),
+		People:       ledger.Balances(&records),
+		View:         view,
+		PaymentChips: make(map[string][]ledger.PaymentChip, len(records.People)),
+		Valid:        code(ledger.ValidateRecords(&records, input.Today)),
+		Changes:      make([]changeResult, len(input.Changes)),
+		Amounts:      make([]*int64, len(input.Amounts)),
+	}
+
+	for _, person := range records.People {
+		got.PaymentChips[person.ID] = ledger.PaymentChips(view, &records, person.ID)
 	}
 
 	for i := range records.Purchases {

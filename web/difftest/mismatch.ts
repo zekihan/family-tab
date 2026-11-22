@@ -2,6 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import { calculate } from "./calculate.ts";
 import type { Result } from "./calculate.ts";
 import type { LedgerCase } from "./generate.ts";
+import type { PurchaseView } from "../src/ledger/index.ts";
+import type { ComingUpEntry, HomeTotals, PaymentChip, PersonBalance, StatusChip } from "../src/types.ts";
 
 type Path = (string | number)[];
 
@@ -121,7 +123,12 @@ export function fixture(name: string, mismatch: Mismatch) {
   const expect: {
     valid?: true | { code: NonNullable<Result["valid"]> };
     schedules: Record<string, NonNullable<Result["schedules"][string]["adjusted"]>>;
-    people: Record<string, Partial<Result["people"][string]>>;
+    people: Record<string, Partial<PersonBalance>>;
+    home?: Partial<HomeTotals>;
+    purchases?: Record<string, Partial<PurchaseView>>;
+    comingUp?: ComingUpEntry[];
+    chips?: Record<string, StatusChip>;
+    paymentChips?: Record<string, PaymentChip[]>;
   } = { schedules: {}, people: {} };
 
   if (go.valid === ts.valid) expect.valid = go.valid === null ? true : { code: go.valid };
@@ -141,6 +148,29 @@ export function fixture(name: string, mismatch: Mismatch) {
     const fields = Object.keys(balance) as (keyof typeof balance)[];
     const agreed = fields.filter(key => key !== "personId" && balance[key] === tsBalance[key]);
     if (agreed.length) expect.people[id] = Object.fromEntries(agreed.map(key => [key, balance[key]]));
+  }
+
+  const agreeingFields = <T extends object>(goValue: T, tsValue: T | undefined, skip: string[] = []) => {
+    const fields = (Object.keys(goValue) as (keyof T & string)[])
+      .filter(key => !skip.includes(key) && isDeepStrictEqual(goValue[key], tsValue?.[key]));
+    return Object.fromEntries(fields.map(key => [key, goValue[key]])) as Partial<T>;
+  };
+  for (const [id, balance] of Object.entries(go.view.balances)) {
+    const agreed = agreeingFields(balance, ts.view.balances[id], ["personId"]);
+    if (Object.keys(agreed).length) expect.people[id] = { ...expect.people[id], ...agreed };
+  }
+  const home = agreeingFields(go.view.home, ts.view.home);
+  if (Object.keys(home).length) expect.home = home;
+  for (const [id, purchase] of Object.entries(go.view.purchases)) {
+    const agreed = agreeingFields(purchase, ts.view.purchases[id], ["purchaseId"]);
+    if (Object.keys(agreed).length) (expect.purchases ??= {})[id] = agreed;
+  }
+  if (isDeepStrictEqual(go.view.comingUp, ts.view.comingUp)) expect.comingUp = go.view.comingUp;
+  for (const [id, chip] of Object.entries(go.view.chips)) {
+    if (isDeepStrictEqual(chip, ts.view.chips[id])) (expect.chips ??= {})[id] = chip;
+  }
+  for (const [id, chips] of Object.entries(go.paymentChips)) {
+    if (isDeepStrictEqual(chips, ts.paymentChips[id])) (expect.paymentChips ??= {})[id] = chips;
   }
 
   return { name, description: describe(mismatch), timeZone: input.timeZone, today: input.today, records: input.records, expect };

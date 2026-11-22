@@ -1,6 +1,9 @@
-import { adjustedSchedule, buildSchedule, computeLedger, parseAmount, validateChange, validateRecords } from "../src/ledger/index.ts";
+import {
+  adjustedSchedule, buildSchedule, computeLedger, parseAmount, paymentChips, validateChange, validateRecords,
+} from "../src/ledger/index.ts";
+import type { LedgerView } from "../src/ledger/index.ts";
 import { SETTINGS_ID } from "../src/types.ts";
-import type { Operation, PersonBalance, ReceiptCode, Records, ScheduledAmount } from "../src/types.ts";
+import type { Operation, PaymentChip, PersonBalance, ReceiptCode, Records, ScheduledAmount } from "../src/types.ts";
 import type { LedgerCase } from "./generate.ts";
 
 type SharedBalance = Pick<PersonBalance, "personId" | "paymentsReceived" | "cashReturned" | "netReceipts" | "credit" | "cashShortfall">;
@@ -8,6 +11,8 @@ type SharedBalance = Pick<PersonBalance, "personId" | "paymentsReceived" | "cash
 export interface Result {
   schedules: Record<string, { base: ScheduledAmount[] | null; adjusted: ScheduledAmount[] | null }>;
   people: Record<string, SharedBalance>;
+  view: Omit<LedgerView, "homeOrder">;
+  paymentChips: Record<string, PaymentChip[]>;
   valid: ReceiptCode | null;
   changes: { code: ReceiptCode | null; recordsCode: ReceiptCode | null }[];
   amounts: (number | null)[];
@@ -57,7 +62,9 @@ export function calculate(input: LedgerCase): Result {
     settings: { id: SETTINGS_ID, currency: "TRY", timeZone, version: "fixture" },
   };
 
-  const { balances } = computeLedger(records, today);
+  const full = computeLedger(records, today);
+  const { homeOrder: _homeOrder, ...view } = full;
+  const { balances } = view;
   return {
     schedules: Object.fromEntries(records.purchases.map(purchase => [
       purchase.id, { base: buildSchedule(purchase), adjusted: adjustedSchedule(purchase, records.refunds) },
@@ -66,6 +73,8 @@ export function calculate(input: LedgerCase): Result {
       const { personId, paymentsReceived, cashReturned, netReceipts, credit, cashShortfall } = balance;
       return [id, { personId, paymentsReceived, cashReturned, netReceipts, credit, cashShortfall }];
     })),
+    view,
+    paymentChips: Object.fromEntries(records.people.map(person => [person.id, paymentChips(full, records, person.id)])),
     valid: validateRecords(records, today)?.code ?? null,
     changes: input.changes.map(({ op }) => {
       const after = applyOperation(records, op);

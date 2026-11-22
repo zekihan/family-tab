@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -15,9 +16,14 @@ const fixtureRoot = "../../testdata"
 
 type ledgerFixture struct {
 	Expect struct {
-		Schedules map[string][]ScheduledAmount          `json:"schedules"`
-		People    map[string]map[string]json.RawMessage `json:"people"`
-		Valid     json.RawMessage                       `json:"valid"`
+		Schedules    map[string][]ScheduledAmount          `json:"schedules"`
+		People       map[string]map[string]json.RawMessage `json:"people"`
+		Home         map[string]json.RawMessage            `json:"home"`
+		Purchases    map[string]map[string]json.RawMessage `json:"purchases"`
+		Chips        map[string]StatusChip                 `json:"chips"`
+		PaymentChips map[string][]PaymentChip              `json:"paymentChips"`
+		Valid        json.RawMessage                       `json:"valid"`
+		ComingUp     []ComingUpEntry                       `json:"comingUp"`
 	} `json:"expect"`
 	TimeZone string  `json:"timeZone"`
 	Today    string  `json:"today"`
@@ -104,7 +110,84 @@ func TestLedgerFixtures(t *testing.T) {
 
 		assertSchedules(t, records, fixture.Expect.Schedules)
 		assertFixtureBalances(t, records, fixture.Expect.People)
+		assertFixtureView(t, records, &fixture)
 	})
+}
+
+func assertFixtureView(t *testing.T, records *Records, fixture *ledgerFixture) {
+	t.Helper()
+
+	expect := fixture.Expect
+	view := View(records, fixture.Today)
+
+	for id, want := range expect.People {
+		balance, ok := view.Balances[id]
+		if !ok {
+			t.Fatalf("balance missing for %s", id)
+		}
+
+		assertPartial(t, "people "+id, balance, want)
+	}
+
+	if expect.Home != nil {
+		assertPartial(t, "home", view.Home, expect.Home)
+	}
+
+	for id, want := range expect.Purchases {
+		purchase, ok := view.Purchases[id]
+		if !ok {
+			t.Fatalf("purchase view missing for %s", id)
+		}
+
+		assertPartial(t, "purchases "+id, purchase, want)
+	}
+
+	if expect.ComingUp != nil && !reflect.DeepEqual(view.ComingUp, expect.ComingUp) {
+		t.Errorf(
+			"comingUp = %s, want %s",
+			fixtureJSON(t, view.ComingUp),
+			fixtureJSON(t, expect.ComingUp),
+		)
+	}
+
+	for id, want := range expect.Chips {
+		if got := view.Chips[id]; got != want {
+			t.Errorf("chips %s = %s, want %s", id, fixtureJSON(t, got), fixtureJSON(t, want))
+		}
+	}
+
+	for id, want := range expect.PaymentChips {
+		got := PaymentChips(view, records, id)
+		if !slices.Equal(got, want) {
+			t.Errorf("paymentChips %s = %s, want %s", id, fixtureJSON(t, got), fixtureJSON(t, want))
+		}
+	}
+}
+
+func assertPartial(t *testing.T, label string, got any, want map[string]json.RawMessage) {
+	t.Helper()
+
+	var fields map[string]json.RawMessage
+
+	decodeFixture(t, fixtureJSON(t, got), &fields)
+
+	for field, wantRaw := range want {
+		gotRaw, ok := fields[field]
+		if !ok {
+			t.Errorf("%s: no field %s", label, field)
+
+			continue
+		}
+
+		var gotValue, wantValue any
+
+		decodeFixture(t, gotRaw, &gotValue)
+		decodeFixture(t, wantRaw, &wantValue)
+
+		if !reflect.DeepEqual(gotValue, wantValue) {
+			t.Errorf("%s %s = %s, want %s", label, field, gotRaw, wantRaw)
+		}
+	}
 }
 
 func assertSchedules(t *testing.T, records *Records, expected map[string][]ScheduledAmount) {

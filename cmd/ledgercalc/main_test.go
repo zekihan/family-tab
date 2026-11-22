@@ -53,6 +53,30 @@ func TestRun(t *testing.T) {
 		"people":{"person":{
 			"personId":"person","paymentsReceived":10,"cashReturned":3,"netReceipts":7,"credit":3,"cashShortfall":0
 		}},
+		"view":{
+			"today":"2024-02-29",
+			"balances":{"person":{
+				"personId":"person","leftToPay":0,"dueByToday":0,"dueNextMonth":0,"behindPlan":false,
+				"paymentsReceived":10,"cashReturned":3,"netReceipts":7,"credit":3,"cashShortfall":0,
+				"earliestUnpaidFuture":null
+			}},
+			"chips":{"person":{"kind":"credit","amountMinor":3,"behindPlan":false}},
+			"purchases":{"purchase":{
+				"purchaseId":"purchase",
+				"base":[
+					{"purchaseId":"purchase","sequence":1,"baseMinor":3,"adjustedMinor":3,"dueOn":"2024-02-29"},
+					{"purchaseId":"purchase","sequence":2,"baseMinor":2,"adjustedMinor":2,"dueOn":"2024-03-31"}
+				],
+				"adjusted":[
+					{"purchaseId":"purchase","sequence":1,"baseMinor":3,"adjustedMinor":3,"dueOn":"2024-02-29"},
+					{"purchaseId":"purchase","sequence":2,"baseMinor":2,"adjustedMinor":1,"dueOn":"2024-03-31"}
+				],
+				"paid":[3,1],"refundedMinor":1,"leftMinor":0,"earliestUnpaidDue":null,"paidCount":2,"payableCount":2
+			}},
+			"home":{"leftToPay":0,"dueByToday":0,"dueNextMonth":0,"credit":3,"archivedLeftToPay":0},
+			"comingUp":[]
+		},
+		"paymentChips":{"person":[]},
 		"valid":null,
 		"changes":[
 			{"code":null,"recordsCode":null},
