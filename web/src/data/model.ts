@@ -51,7 +51,14 @@ type QueueState =
   | { state: "sendable" }
   | { state: "pendingUndo"; deadline: number }
   | { state: "acked"; receipt: Receipt }
-  | { state: "needsReview"; reason: string; receipt?: Receipt; restore?: boolean; ruleError?: RuleError };
+  | {
+    state: "needsReview";
+    reason: string;
+    receipt?: Receipt;
+    restore?: boolean;
+    restoreGeneration?: string;
+    ruleError?: RuleError;
+  };
 
 export type QueueEntry = QueueState & {
   order: number;

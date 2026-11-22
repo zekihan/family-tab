@@ -6,6 +6,7 @@ import { createStore } from "../../src/data/index.ts";
 import { applyOperation } from "../../src/data/model.ts";
 import * as ledger from "../../src/ledger/index.ts";
 import type { Operation, RestoreRequest } from "../../src/types.ts";
+import { reviewActions } from "../../src/ui/presentation.ts";
 import { backup, deferred, harness, initial, other, payment, person, purchase, refund, token } from "./helpers.ts";
 
 test("offline edits are persisted and stale form saves return the current record", async () => {
@@ -301,6 +302,109 @@ test("a changed generation reported by receipts moves queued work to review befo
   await store.syncNow();
   assert.equal(server.operations.length, 0);
   assert.equal(store.getSnapshot().reviewItems[0].restore, true);
+});
+
+test("a held rename waits for the restored snapshot before it can be applied", async () => {
+  const { store, clock, server } = harness();
+  await store.start();
+  clock.online = false;
+  const earlier = await store.updateRecord("person", person.id, token(store, person), { name: "Earlier" });
+  const rename = await store.updateRecord("person", person.id,
+    token(store, store.getSnapshot().records.people[0]), { name: person.name });
+  assert.equal(earlier.status, "saved");
+  assert.equal(rename.status, "saved");
+  server.result.decide = op => op.id === earlier.opId ? { status: "conflict", code: "conflict", current: person } : undefined;
+  clock.online = true;
+  await store.syncNow();
+  clock.online = false;
+  assert.equal((await store.discard(earlier.opId)).status, "saved");
+
+  const restored = { ...person, name: "Restored", version: "restored-person" };
+  server.replace({ ...initial(), people: [restored, other], generation: "new", revision: 4 });
+  const requested = deferred<void>();
+  const release = deferred<void>();
+  server.hook.fetch = async path => {
+    if (path === "/api/snapshot") {
+      requested.resolve();
+      await release.promise;
+    }
+    return undefined;
+  };
+  clock.online = true;
+  const sync = store.syncNow();
+  await requested.promise;
+  try {
+    const [waiting] = store.getSnapshot().reviewItems;
+    assert.equal(store.getSnapshot().generation, initial().generation);
+    assert.equal(store.getSnapshot().records.people[0].name, person.name);
+    const result = await store.keepLocal(rename.opId, waiting);
+    assert.equal(result.status, "invalid");
+    assert.match(result.error.reason, /wait.*restored ledger/i);
+    assert.equal(waiting.waitingForRestoredLedger, true);
+    assert.deepEqual(store.getSnapshot().reviewItems.map(item => item.op.id), [rename.opId]);
+  } finally {
+    release.resolve();
+    await sync;
+  }
+
+  const [ready] = store.getSnapshot().reviewItems;
+  assert.equal(ready.waitingForRestoredLedger, false);
+  assert.deepEqual(ready.server, restored);
+  assert.equal((await store.editAndResubmit(rename.opId, {}, ready)).status, "invalid");
+  assert.equal((await store.keepLocal(rename.opId, ready)).status, "saved");
+  await store.syncNow();
+  const sent = server.operations.at(-1)!.items[0].op;
+  assert.deepEqual(sent.kind === "update" && [sent.generation, sent.baseVersion, sent.patch],
+    ["new", restored.version, { name: person.name }]);
+  assert.equal(server.snapshot.people[0].name, person.name);
+  assert.deepEqual(store.getSnapshot().reviewItems, []);
+});
+
+test("a payout above restored credit can be confirmed as cash already returned", async t => {
+  for (const resubmit of [false, true]) {
+    await t.test(resubmit ? "edit and resubmit" : "apply to restored ledger", async () => {
+      const { store, clock, server, createAnother } = harness({ rules: ledger });
+      const paid = { ...payment(), id: crypto.randomUUID(), version: "paid", amountMinor: 490 };
+      server.replace({ ...initial(), payments: [paid] });
+      await store.start();
+      assert.equal(store.getSnapshot().ledger?.balances[person.id].credit, 400);
+      clock.online = false;
+      const payout = { personId: person.id, amountMinor: 300, paidOutOn: "2026-11-22", note: null };
+      const saved = await store.createRecord("payout", payout);
+      assert.equal(saved.status, "saved");
+
+      server.replace({ ...initial(), generation: "new", revision: 4 });
+      clock.online = true;
+      await store.syncNow();
+      const [restored] = store.getSnapshot().reviewItems;
+      assert.equal(restored.restore, true);
+      const submitted = resubmit
+        ? await store.editAndResubmit(saved.opId, { amountMinor: 250, note: "Edited" }, restored)
+        : await store.keepLocal(saved.opId, restored);
+      assert.equal(submitted.status, "invalid");
+      assert.equal(submitted.error.code, "payout_exceeds_credit");
+      assert.equal(store.getSnapshot().reviewItems[0].restore, false);
+
+      const reopened = createAnother();
+      await reopened.start();
+      const [held] = reopened.getSnapshot().reviewItems;
+      assert.equal(held.code, "payout_exceeds_credit");
+      assert.equal(reviewActions(held).confirmPayout, true);
+      assert.deepEqual(held.local, { ...payout, ...(resubmit ? { amountMinor: 250, note: "Edited" } : {}),
+        id: saved.recordId, version: held.op.id });
+      assert.deepEqual(reopened.getSnapshot().records.payouts, []);
+      assert.equal(server.operations.length, 0);
+      assert.equal((await reopened.confirmAlreadyReturned(held.op.id, held)).status, "saved");
+      await reopened.syncNow();
+      const sent = server.operations[0].items[0].op;
+      assert.equal(sent.kind, "create");
+      assert.equal(sent.generation, "new");
+      assert.equal(sent.alreadyReturned, true);
+      assert.notEqual(sent.id, held.op.id);
+      assert.deepEqual(server.snapshot.payouts, [{ ...held.local, version: sent.id }]);
+      assert.deepEqual(reopened.getSnapshot().reviewItems, []);
+    });
+  }
 });
 
 test("discarding an offline rename after another device restores leaves only the payday change", async () => {
@@ -639,6 +743,8 @@ test("restore preview rejects a malformed payment patch and legacy review data s
       reason: "From an older restore", local: { ...record, paidOn: 123 } as unknown as typeof record });
   });
   await store.refreshLocal();
+  assert.equal(store.getSnapshot().reviewItems[0].waitingForRestoredLedger, true);
+  await store.syncNow();
   const [item] = store.getSnapshot().reviewItems;
   assert.equal(item.local, null);
   assert.deepEqual(item.server, record);

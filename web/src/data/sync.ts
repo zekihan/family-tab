@@ -13,9 +13,11 @@ export function assertSession(state: LocalState, epoch: string | undefined) {
   if (state.meta.signedOut || state.meta.epoch !== epoch) throw new LocalStateError("signedOut");
 }
 
-function restoreReview(row: QueueEntry): Extract<QueueEntry, { state: "needsReview" }> {
-  if (row.state === "needsReview" && row.restore) return row;
-  return { ...row, state: "needsReview", restore: true, receipt: undefined, ruleError: undefined,
+function restoreReview(row: QueueEntry, restoreGeneration: string): Extract<QueueEntry, { state: "needsReview" }> {
+  if (row.state === "needsReview" && row.restore) {
+    return row.restoreGeneration === restoreGeneration ? row : { ...row, restoreGeneration };
+  }
+  return { ...row, state: "needsReview", restore: true, restoreGeneration, receipt: undefined, ruleError: undefined,
     reason: "The ledger was restored. Review this change against the restored ledger." };
 }
 
@@ -25,9 +27,10 @@ function observeResults(state: LocalState, generation: string, results: OpResult
     const result = byId.get(row.op.id);
     // The original operation is reapplied to the restored snapshot during review.
     if (row.op.generation !== generation || (result && "generation" in result && result.generation !== generation) ||
-        (row.state === "acked" && row.receipt.generation !== generation)) return restoreReview(row);
-    if (!result || result.status === "skipped" || (row.state === "needsReview" && row.restore)) return row;
-    if (result.status === "held") return restoreReview(row);
+        (row.state === "acked" && row.receipt.generation !== generation) ||
+        (row.state === "needsReview" && row.restore)) return restoreReview(row, generation);
+    if (!result || result.status === "skipped") return row;
+    if (result.status === "held") return restoreReview(row, generation);
     if (result.status === "applied") return { ...row, state: "acked", receipt: result };
     return { ...row, state: "needsReview", receipt: result, reason: result.reason ?? "The server declined this change." };
   });
@@ -37,9 +40,10 @@ export function reconcile(state: LocalState, snapshot: Snapshot, now: number) {
   state.queue = state.queue.flatMap(row => {
     if (row.op.generation !== snapshot.generation ||
       (row.state === "acked" && row.receipt.generation !== snapshot.generation)) {
-      return reflects(snapshot, row.op) ? [] : [restoreReview(row)];
+      return reflects(snapshot, row.op) ? [] : [restoreReview(row, snapshot.generation)];
     }
     if (row.state === "acked" && row.receipt.revision <= snapshot.revision) return [];
+    if (row.state === "needsReview" && row.restore) return [restoreReview(row, snapshot.generation)];
     return [row];
   });
   state.snapshot = snapshot;
@@ -103,7 +107,8 @@ export async function syncLedger(
     assertSession(state, epoch);
     const snapshot = await api.snapshot();
     const seen = state.queue.flatMap(row => row.state === "acked" ? [row.receipt] : []);
-    if (isAhead([...receiptList, ...seen], snapshot) ||
+    if ((snapshot.generation === state.snapshot?.generation && snapshot.generation !== observed.generation) ||
+      isAhead([...receiptList, ...seen], snapshot) ||
       (state.snapshot?.generation === snapshot.generation && state.snapshot.revision > snapshot.revision)) continue;
     await changeLocal(db, epoch, current => reconcile(current, snapshot, now()));
     return;
@@ -120,7 +125,7 @@ export function importUnapplied(state: LocalState, snapshot: Snapshot, now: numb
     const local = proposedRecord(findRecord(snapshot, op.recordType, op.recordId), op);
     imported.push({
       ...restoreReview({ op, order: row.order, state: "sendable",
-        local, people: affectedPeople(snapshot, op), dependencies: row.dependencies }),
+        local, people: affectedPeople(snapshot, op), dependencies: row.dependencies }, snapshot.generation),
       reason: row.reason ?? "This change was unapplied in the restored backup.",
     });
     known.add(op.id);

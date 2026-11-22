@@ -50,6 +50,8 @@ export interface ReviewItem {
   waiting: Operation[];
   /** An earlier related change is still queued. */
   waitingOnEarlier?: boolean;
+  /** The restored snapshot still needs to be committed on this device. */
+  waitingForRestoredLedger?: boolean;
   /** Ledger generation when the server version was displayed. */
   generation?: string;
 }
@@ -133,6 +135,10 @@ function reviewServer(snapshot: Snapshot | undefined, row: Extract<QueueEntry, {
   return findRecord(snapshot ?? emptyRecords, op.recordType, op.recordId);
 }
 
+function waitsForRestoredLedger(row: Extract<QueueEntry, { state: "needsReview" }>, snapshot: Snapshot | undefined) {
+  return !!row.restore && (!row.restoreGeneration || row.restoreGeneration !== snapshot?.generation);
+}
+
 function reviewLocal(current: LedgerRecord | null, row: Extract<QueueEntry, { state: "needsReview" }>) {
   const { op } = row;
   if (!row.restore) return row.local;
@@ -214,12 +220,14 @@ export function createStore(options: StoreOptions = {}) {
       const op = row.restore ? reviewOperation(row.op) : row.op;
       const blockingIds = row.receipt?.blocking ?? row.ruleError?.blocking ?? [];
       const all = state.snapshot ?? emptyRecords;
-      const server = reviewServer(state.snapshot, row);
+      const waitingForRestoredLedger = waitsForRestoredLedger(row, state.snapshot);
+      const server = waitingForRestoredLedger ? null : reviewServer(state.snapshot, row);
       return [{
         op, reason: row.reason, code: row.receipt?.code ?? row.ruleError?.code ?? null, restore: !!row.restore,
         local: reviewLocal(server, row), server, blockingIds,
         generation: state.snapshot?.generation,
         waitingOnEarlier: view.reviewWaiting.has(op.id),
+        waitingForRestoredLedger,
         blocking: [all.settings, ...all.people, ...all.purchases, ...all.payments, ...all.refunds, ...all.payouts]
           .filter((record): record is LedgerRecord => !!record && blockingIds.includes(record.id)),
         waiting: state.queue.filter(candidate => {
@@ -616,18 +624,21 @@ export function createStore(options: StoreOptions = {}) {
     return removed;
   }
 
-  function review(
+  async function review(
     opId: string, action: ReviewAction, edited?: Record<string, unknown>, opened?: ReviewItem,
   ): Promise<SaveResult> {
     const reviewed = opened ?? snapshot.reviewItems.find(row => row.op.id === opId);
     const reviewedGeneration = reviewed?.generation ?? snapshot.generation;
-    return localSave(state => {
+    let heldPayout = false;
+    const result = await localSave(state => {
       const row = state.queue.find(row => row.op.id === opId);
       if (!row || row.state !== "needsReview" || !state.snapshot || reviewed?.op.id !== opId) return invalid("Open Review again.");
+      if (waitsForRestoredLedger(row, state.snapshot)) return invalid("Wait for the restored ledger to finish syncing.");
       const original = row.op;
       const generation = state.snapshot.generation;
       const current = reviewServer(state.snapshot, row);
-      if (action !== "discard" && (reviewedGeneration !== generation || reviewed.server?.version !== current?.version)) {
+      if (action !== "discard" && (reviewed.waitingForRestoredLedger ||
+          reviewedGeneration !== generation || reviewed.server?.version !== current?.version)) {
         return { status: "stale", current, generation };
       }
       const remaining = state.queue.filter(entry => entry !== row);
@@ -669,23 +680,43 @@ export function createStore(options: StoreOptions = {}) {
         const record = { ...payload, ...edited, id: original.recordId } as LedgerRecord;
         op = { ...base, kind: "create", record: noVersion(record) };
       } else {
-        const fields = keep ? changedFields(current, noVersion(keep)) :
+        const fields = keep ? noVersion(keep) :
           edited ?? (original.kind === "update" ? original.patch : original.record);
-        const patch = patchFields(original.recordType, fields);
+        const changes = keep || row.restore ? changedFields(current, fields) : fields;
+        const patch = patchFields(original.recordType, changes);
         if (row.restore && original.kind === "create" && !edited &&
-            Object.keys(patch).length !== Object.keys(fields).length) {
+            Object.keys(patch).length !== Object.keys(changes).length) {
           return invalid("This change would modify a field that cannot be edited.");
         }
+        if (row.restore && !Object.keys(patch).length) return invalid("This change has no differences from the restored ledger.");
         op = { ...base, kind: "update", baseVersion: current.version, patch };
       }
       const result = enqueue(state, op, before, row.order, row.dependencies);
-      if (result.status === "saved") {
-        state.queue = state.queue.filter(entry => entry !== row).map(entry => entry.dependencies?.includes(opId)
-          ? { ...entry, dependencies: entry.dependencies.map(id => id === opId ? op.id : id) }
-          : entry);
+      let replacement: QueueEntry | undefined;
+      if (row.restore && op.recordType === "payout" && result.status === "invalid" &&
+          result.error.code === "payout_exceeds_credit") {
+        replacement = {
+          op, order: row.order, dependencies: row.dependencies, state: "needsReview",
+          people: affectedPeople(before, op), local: proposedRecord(current, op),
+          reason: result.error.reason, ruleError: result.error,
+        };
+        heldPayout = true;
+      }
+      if (result.status === "saved" || replacement) {
+        state.queue = state.queue.flatMap(entry => {
+          if (entry === row) return replacement ? [replacement] : [];
+          return [entry.dependencies?.includes(opId)
+            ? { ...entry, dependencies: entry.dependencies.map(id => id === opId ? op.id : id) }
+            : entry];
+        });
       }
       return result;
     });
+    if (heldPayout) {
+      announce("change");
+      await refresh();
+    }
+    return result;
   }
 
   function keepServer(id: string): Promise<SaveResult>;

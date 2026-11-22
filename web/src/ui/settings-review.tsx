@@ -169,16 +169,17 @@ function ReviewCard({ item }: { item: ReviewItem }) {
   const actions = reviewActions(item);
   const local = item.local ?? (op.kind === "delete" ? op.preImage : op.kind === "create" ? op.record as LedgerRecord : null);
   const busy = save.busy || snapshot.sync.restoreInProgress;
+  const waiting = item.waitingForRestoredLedger;
   return <article className="card review-card">
     <div><h2>{op.kind === "create" ? "Add" : op.kind === "update" ? "Edit" : "Delete"} {recordLabels[op.recordType]}</h2>
-      <p className="expected">{item.reason}</p></div>
+      <p className="expected">{waiting ? "Waiting for the restored ledger to finish syncing." : item.reason}</p></div>
     <div className="review-versions">
       <section><h3>Your change</h3>{op.kind === "delete" && <p className="hint">Marked for deletion</p>}
         {!local && op.kind === "update" ? <details>
           <summary>Show saved changes</summary>
           <pre className="review-payload">{JSON.stringify(op.patch, null, 2)}</pre>
         </details> : <RecordSummary record={local} records={snapshot.records} />}</section>
-      <section><h3>Server version</h3><RecordSummary record={item.server} records={snapshot.records} /></section>
+      {!waiting && <section><h3>Server version</h3><RecordSummary record={item.server} records={snapshot.records} /></section>}
     </div>
     {item.blockingIds.length > 0 && <section>
       <h3>Blocking records</h3>
@@ -195,7 +196,7 @@ function ReviewCard({ item }: { item: ReviewItem }) {
       </li>)}</ul>
     </section>}
     {item.waitingOnEarlier && <p className="hint">Waiting for earlier changes to be resolved.</p>}
-    <div className="actions">
+    {!waiting && <div className="actions">
       {actions.keepServer && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepServer(op.id, item))}>Keep server</button>}
       {!item.waitingOnEarlier && <>
         {actions.keep && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepLocal(op.id, item))}>{item.restore ? "Apply to restored ledger" : "Keep mine"}</button>}
@@ -204,12 +205,12 @@ function ReviewCard({ item }: { item: ReviewItem }) {
         {actions.confirmPayout && item.local && <button className="button secondary" disabled={busy} onClick={() => setConfirmer(item)}>Confirm cash already returned</button>}
       </>}
       {!actions.keepServer && <button className="button quiet" disabled={busy} onClick={() => void save.submit(() => store.discard(op.id))}>Discard</button>}
-    </div>
+    </div>}
     {save.error && !confirmer && <p className="error-text" role="alert">{save.error}</p>}
-    {editor && !item.waitingOnEarlier && <Sheet title={`Resubmit ${recordLabels[op.recordType]}`} onClose={() => setEditor(null)}>
+    {editor && !waiting && !item.waitingOnEarlier && <Sheet title={`Resubmit ${recordLabels[op.recordType]}`} onClose={() => setEditor(null)}>
       <ReviewEditor item={editor} onSaved={() => { setEditor(null); notify("Change resubmitted."); }} />
     </Sheet>}
-    {confirmer && !item.waitingOnEarlier && <Sheet title="Confirm cash already returned" onClose={() => setConfirmer(null)}>
+    {confirmer && !waiting && !item.waitingOnEarlier && <Sheet title="Confirm cash already returned" onClose={() => setConfirmer(null)}>
       <SaveForm {...save} label="Confirm cash already returned" onSave={() => void save.submit(() => store.confirmAlreadyReturned(op.id, confirmer))}>
         <p>Confirm only if you have already returned this cash. The payout may create a cash shortfall.</p>
         <RecordSummary record={confirmer.local} records={snapshot.records} />
