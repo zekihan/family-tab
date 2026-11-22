@@ -150,6 +150,22 @@ test("an invalid purchase date in the collapsed section is revealed when Save is
   await expect(dialog).toBeVisible();
 });
 
+test("the installment amount and date range fit in the phone viewport", async ({ app, page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.clock.install({ time: new Date("2026-11-16T12:00:00Z") });
+  await setup(page, app.url);
+  await purchase(page, { item: "Kitchen towels", price: "100", newPerson: "Mom" });
+  await purchase(page, { item: "Socks", price: "50", newPerson: "Dad" });
+  await page.getByRole("button", { name: /^\+?\s*Add purchase$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Add purchase" });
+  await dialog.getByRole("button", { name: "Mom", exact: true }).click();
+  await dialog.getByLabel("What").fill("Air fryer");
+  await dialog.getByLabel("Total price").fill("4800");
+  await dialog.getByRole("button", { name: "In installments", exact: true }).click();
+  const preview = dialog.getByText(/6 × 800 TL.*16 Dec 2026.*16 May 2027/);
+  await expect(preview).toBeInViewport({ ratio: 1 });
+});
+
 test("saving a purchase without a person shows the error by Who on a phone screen", async ({ app, page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await setup(page, app.url);

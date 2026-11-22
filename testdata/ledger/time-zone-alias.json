@@ -1,0 +1,8 @@
+{
+  "name": "time-zone-alias",
+  "description": "IANA aliases are valid ledger time zones",
+  "timeZone": "US/Eastern",
+  "today": "2025-11-22",
+  "records": { "people": [], "purchases": [], "payments": [], "refunds": [], "payouts": [] },
+  "expect": { "valid": true }
+}

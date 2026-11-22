@@ -75,7 +75,26 @@ export function canonicalTimeZone(timeZone: string): string | null {
   }
 }
 
+// Intl accepts case variants and may resolve a link to a different name. Check
+// the spelling of link components using IANA's title case and its exceptions.
+const zoneCaseExceptions = new Map([
+  "ACT", "BajaNorte", "BajaSur", "Blanc-Sablon", "CET", "CST6CDT",
+  "ComodRivadavia", "Dar_es_Salaam", "DeNoronha", "DumontDUrville",
+  "EET", "EST", "EST5EDT", "East-Indiana", "EasterIsland", "GB", "GB-Eire",
+  "GMT", "GMT0", "HST", "Indiana-Starke", "Isle_of_Man", "Knox_IN", "LHI",
+  "MET", "MST", "MST7MDT", "McMurdo", "NSW", "NZ", "NZ-CHAT", "PRC",
+  "PST8PDT", "Port-au-Prince", "Port_of_Spain", "Porto-Novo", "ROC", "ROK",
+  "UCT", "US", "UTC", "Ust-Nera", "W-SU", "WET",
+].map(part => [part.toLowerCase(), part]));
+
 export function isValidTimeZone(timeZone: string): boolean {
   const canonical = canonicalTimeZone(timeZone);
-  return canonical !== null && canonical === timeZone;
+  if (canonical === null) return false;
+  if (canonical.toLowerCase() === timeZone.toLowerCase()) return canonical === timeZone;
+  return timeZone.split("/").every(part => {
+    const spelling = zoneCaseExceptions.get(part.toLowerCase());
+    return spelling === undefined
+      ? /^(?:[A-Z][a-z]*(?:_[A-Z][a-z]*)*|GMT[+-]\d{1,2})$/.test(part)
+      : part === spelling;
+  });
 }

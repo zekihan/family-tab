@@ -338,7 +338,7 @@ input::file-selector-button { margin-right: 0.5rem; color: var(--accent); font-w
 .notice, .error-text { padding: 0.6rem 0.7rem; border-radius: 0.6rem; background: var(--surface-2); overflow-wrap: anywhere; }
 .notice .summary-list, .notice .button { margin-top: 0.4rem; }
 .error-text { color: var(--expected); background: var(--expected-soft); }
-.installment-preview { color: var(--paid); background: var(--paid-soft); }
+.installment-preview { margin-top: 0.45rem; color: var(--paid); }
 .gate {
   display: grid;
   place-items: center;

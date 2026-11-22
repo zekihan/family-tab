@@ -1,0 +1,8 @@
+{
+  "name": "time-zone-alias-lowercase",
+  "description": "IANA aliases require their registered casing",
+  "timeZone": "us/eastern",
+  "today": "2025-11-22",
+  "records": { "people": [], "purchases": [], "payments": [], "refunds": [], "payouts": [] },
+  "expect": { "valid": { "code": "invalid" } }
+}

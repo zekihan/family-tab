@@ -30,14 +30,15 @@ function useFormSave(target: Pick<FormTarget<RecordType>, "token" | "onSaved" | 
     else setToken({ generation, version: current.version });
     save.setStale(null);
   }
-  return { ...save, token, onReapply };
+  const recreateGeneration = target.onReviewReapply && save.stale?.current === null ? save.stale.generation : undefined;
+  return { ...save, token, onReapply, recreateGeneration };
 }
 
 function useRecordForm<T extends Exclude<RecordType, "settings">>(type: T, target: FormTarget<T>) {
   const { store } = useLedgerUI();
   const save = useFormSave(target);
   function commit(fields: Fields<T>) {
-    if (target.commit) return target.commit(fields);
+    if (target.commit) return target.commit(fields, save.recreateGeneration);
     if (target.initial && save.token) return store.updateRecord(type, target.initial.id, save.token, patchBetween(target.initial, fields));
     return store.createRecord(type, fields);
   }
@@ -50,7 +51,10 @@ const dueLabels = {
 };
 type DueChoice = keyof typeof dueLabels;
 
-export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTarget<"purchase"> & { personId?: string }) {
+export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...target }: DatedFormTarget<"purchase"> & {
+  personId?: string;
+  commitWithNewPerson?: (fields: Fields<"purchase">, person: Fields<"person">, recreateGeneration?: string) => Promise<SaveResult>;
+}) {
   const { snapshot } = useLedgerUI();
   const today = snapshot.ledger!.today;
   const { initial } = target;
@@ -90,7 +94,7 @@ export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTar
   const preview = plan === "installments" && parsed.ok ? installmentPreview(parsed.minor, count, start.firstDue, start.dueDay) : null;
   const invalidPlan = plan === "installments" && parsed.ok && !preview;
   const previewText = preview && (preview.minAmount === preview.maxAmount
-    ? `${count} × ${formatTRY(preview.minAmount)}` : `${count} installments of ${formatTRY(preview.minAmount)} to ${formatTRY(preview.maxAmount)}`);
+    ? `${count} × ${formatTRY(preview.minAmount)}` : `${count} × ${formatTRY(preview.minAmount)}–${formatTRY(preview.maxAmount)}`);
 
   function selectPerson(id: string) {
     setWhoMissing(false);
@@ -125,7 +129,9 @@ export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTar
       return;
     }
     void save.submit(async () => {
-      const result = await store.createRecord("person", { name: newName.trim(), payday, archived: false });
+      const fieldsForPerson = { name: newName.trim(), payday, archived: false };
+      if (commitWithNewPerson) return commitWithNewPerson(fields, fieldsForPerson, save.recreateGeneration);
+      const result = await store.createRecord("person", fieldsForPerson);
       if (result.status !== "saved") return result;
       fields.personId = result.recordId;
       setWho(result.recordId);
@@ -174,6 +180,12 @@ export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTar
             onClick={() => { setCountText(String(value)); setOther(false); }}>{value}</Chip>)}
           <Chip selected={other} onClick={() => setOther(true)}>Other</Chip>
         </div>
+        <div aria-live="polite">
+          {preview && <p className="hint num installment-preview">
+            <strong>{previewText}</strong> · {displayDate(preview.first)} – {displayDate(preview.last)}
+          </p>}
+          {invalidPlan && <p className="error-text">Choose a valid first date and 2 to 120 installments of at least one kuruş each.</p>}
+        </div>
       </fieldset>
       {other && <label className="field">Number of installments
         <input type="number" required min="2" max="120" step="1" value={countText} onChange={event => setCountText(event.target.value)} />
@@ -190,11 +202,6 @@ export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTar
           }} />
         Last day of each month
       </label>}
-      <div aria-live="polite">
-        {preview && <div className="notice installment-preview"><strong className="num">{previewText}</strong>
-          <p>{displayDate(preview.first)} to {displayDate(preview.last)}</p></div>}
-        {invalidPlan && <p className="error-text">Choose a valid first date and 2 to 120 installments of at least one kuruş each.</p>}
-      </div>
     </>}
     <details className="optional-fields">
       <summary>Purchase date and note</summary>
@@ -265,17 +272,17 @@ export function CashForm(target: CashTarget) {
       switch (target.type) {
         case "payment": {
           const fields = { ...cash, personId, paidOn: date };
-          if (target.commit) return target.commit(fields);
+          if (target.commit) return target.commit(fields, save.recreateGeneration);
           return target.initial && token ? store.updateRecord("payment", target.initial.id, token, patchBetween(target.initial, fields)) : store.createRecord("payment", fields);
         }
         case "refund": {
           const fields = { ...cash, purchaseId, refundedOn: date };
-          if (target.commit) return target.commit(fields);
+          if (target.commit) return target.commit(fields, save.recreateGeneration);
           return target.initial && token ? store.updateRecord("refund", target.initial.id, token, patchBetween(target.initial, fields)) : store.createRecord("refund", fields);
         }
         case "payout": {
           const fields = { ...cash, personId, paidOutOn: date };
-          if (target.commit) return target.commit(fields);
+          if (target.commit) return target.commit(fields, save.recreateGeneration);
           return target.initial && token ? store.updateRecord("payout", target.initial.id, token, patchBetween(target.initial, fields)) : store.createRecord("payout", fields);
         }
       }
@@ -331,7 +338,7 @@ export function ZoneForm(target: FormTarget<"settings">) {
       return;
     }
     const fields = { timeZone, currency: "TRY" as const };
-    void save.submit(() => commit ? commit(fields) : initial && token
+    void save.submit(() => commit ? commit(fields, save.recreateGeneration) : initial && token
       ? store.updateRecord("settings", initial.id, token, patchBetween(initial, fields)) : store.setup(timeZone));
   }
   return <SaveForm {...save} onSave={persist} blocked={!snapshot.generation}

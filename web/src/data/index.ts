@@ -147,6 +147,7 @@ function reviewLocal(current: LedgerRecord | null, row: Extract<QueueEntry, { st
 }
 
 type ReviewAction = "keepServer" | "keepLocal" | "discard" | "editAndResubmit" | "confirmAlreadyReturned";
+type NewPerson = Omit<RecordByType["person"], "id" | "version">;
 
 /** A framework-independent store backed by the browser's shared IndexedDB. */
 export function createStore(options: StoreOptions = {}) {
@@ -628,7 +629,7 @@ export function createStore(options: StoreOptions = {}) {
   }
 
   async function review(
-    opId: string, action: ReviewAction, edited?: Record<string, unknown>, opened?: ReviewItem,
+    opId: string, action: ReviewAction, edited?: Record<string, unknown>, opened?: ReviewItem, newPerson?: NewPerson,
   ): Promise<SaveResult> {
     const reviewed = opened ?? snapshot.reviewItems.find(row => row.op.id === opId);
     const reviewedGeneration = reviewed?.generation ?? snapshot.generation;
@@ -664,7 +665,25 @@ export function createStore(options: StoreOptions = {}) {
           (original.kind === "update" && !validPatch(original.recordType, original.patch)))) {
         return invalid("Edit and resubmit this backup change before applying it.");
       }
-      const before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), time).records;
+      let before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), time).records;
+      let staging = state;
+      let order = row.order;
+      if (newPerson) {
+        if (original.recordType !== "purchase" || original.kind === "delete") {
+          return invalid("A new person can only be added when resubmitting a purchase.");
+        }
+        // Leave a slot before the purchase and publish both operations only if both validate.
+        staging = { ...state, queue: state.queue.map((entry, index) => ({ ...entry, order: (index + 1) * 2 })) };
+        order = staging.queue[state.queue.indexOf(row)].order;
+        const id = uuid();
+        const personOp: Operation = {
+          ...newOperation(generation, "person", id), kind: "create", record: { ...newPerson, id },
+        };
+        const created = enqueue(staging, personOp, before, order - 1);
+        if (created.status !== "saved") return created;
+        before = applyOperation(before, personOp);
+        edited = { ...edited, personId: id };
+      }
       const base = {
         ...newOperation(generation, original.recordType, original.recordId),
         ...(action === "confirmAlreadyReturned" || original.alreadyReturned ? { alreadyReturned: true } : {}),
@@ -694,7 +713,7 @@ export function createStore(options: StoreOptions = {}) {
         if (row.restore && !Object.keys(patch).length) return invalid("This change has no differences from the restored ledger.");
         op = { ...base, kind: "update", baseVersion: current.version, patch };
       }
-      const result = enqueue(state, op, before, row.order, row.dependencies);
+      const result = enqueue(staging, op, before, order, row.dependencies);
       let replacement: QueueEntry | undefined;
       if (row.restore && op.recordType === "payout" && result.status === "invalid" &&
           result.error.code === "payout_exceeds_credit") {
@@ -706,8 +725,8 @@ export function createStore(options: StoreOptions = {}) {
         heldPayout = true;
       }
       if (result.status === "saved" || replacement) {
-        state.queue = state.queue.flatMap(entry => {
-          if (entry === row) return replacement ? [replacement] : [];
+        state.queue = staging.queue.flatMap(entry => {
+          if (entry.op.id === opId) return replacement ? [replacement] : [];
           return [entry.dependencies?.includes(opId)
             ? { ...entry, dependencies: entry.dependencies.map(id => id === opId ? op.id : id) }
             : entry];
@@ -880,9 +899,10 @@ export function createStore(options: StoreOptions = {}) {
     /**
      * Resubmit with a replacement patch, or full fields to recreate a record.
      * Pass the captured item to use the server version shown when the form opened.
+     * For a purchase with a new person, queue the person's creation before the purchase.
      */
-    editAndResubmit: (id: string, fields: Record<string, unknown>, opened?: ReviewItem) =>
-      review(id, "editAndResubmit", fields, opened),
+    editAndResubmit: (id: string, fields: Record<string, unknown>, opened?: ReviewItem, newPerson?: NewPerson) =>
+      review(id, "editAndResubmit", fields, opened, newPerson),
     /** Resubmit a payout the buyer already made, even if it now exceeds credit. */
     confirmAlreadyReturned: (id: string, opened?: ReviewItem) => review(id, "confirmAlreadyReturned", undefined, opened),
     signOut, exportBackup, previewRestore, commitRestore,

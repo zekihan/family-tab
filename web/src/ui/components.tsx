@@ -17,7 +17,7 @@ export function useLedgerUI() {
   return value;
 }
 
-export type Commit<T> = (fields: T) => Promise<SaveResult>;
+export type Commit<T> = (fields: T, recreateGeneration?: string) => Promise<SaveResult>;
 
 export function useSave(onSaved: (result: Extract<SaveResult, { status: "saved" }>) => void) {
   const [error, setError] = useState("");
@@ -76,11 +76,12 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
   </dialog>;
 }
 
-export function SaveForm({ children, onSave, busy, error, stale, onReapply, label = "Save", blocked }: {
+export function SaveForm({ children, onSave, busy, error, stale, onReapply, recreateGeneration, label = "Save", blocked }: {
   children: ReactNode; onSave: () => void; busy: boolean; error?: string; blocked?: boolean;
-  stale?: ReturnType<typeof useSave>["stale"]; onReapply?: () => void; label?: string;
+  stale?: ReturnType<typeof useSave>["stale"]; onReapply?: () => void; recreateGeneration?: string; label?: string;
 }) {
   const { snapshot } = useLedgerUI();
+  const disabled = busy || blocked || (!!stale && recreateGeneration === undefined) || snapshot.sync.restoreInProgress;
   const errorText = useRef<HTMLParagraphElement>(null);
   const staleNotice = useRef<HTMLDivElement>(null);
   // The footer stays put while fields scroll, so bring a new error or the
@@ -93,7 +94,7 @@ export function SaveForm({ children, onSave, busy, error, stale, onReapply, labe
   }, [stale]);
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!stale && !snapshot.sync.restoreInProgress && !blocked && !busy) onSave();
+    if (!disabled) onSave();
   }
   // Browsers cannot focus an invalid field inside a collapsed <details>, so
   // they block Save without showing why. Open the section and show the field.
@@ -118,7 +119,9 @@ export function SaveForm({ children, onSave, busy, error, stale, onReapply, labe
     </div>
     <div className="sheet-footer">
       {snapshot.sync.restoreInProgress && <p role="status" className="hint">Restore in progress. Saving is temporarily unavailable.</p>}
-      <button className="button primary" disabled={busy || blocked || !!stale || snapshot.sync.restoreInProgress}>{busy ? "Saving…" : label}</button>
+      <button className="button primary" disabled={disabled}>
+        {busy ? "Saving…" : recreateGeneration !== undefined ? "Recreate with my changes" : label}
+      </button>
     </div>
   </form>;
 }

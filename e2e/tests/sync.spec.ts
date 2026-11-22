@@ -1,7 +1,7 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
 import {
-  cash, figure, goOffline, homeHeading, openLedger, person, purchase, review, save, seedPerson,
+  cash, figure, goOffline, homeHeading, money, openLedger, person, purchase, review, save, seedPerson,
   settings, setup, signIn, snapshot, synced, syncStatus,
 } from "./ledger";
 
@@ -276,6 +276,79 @@ test("reapplying in a review editor resubmits against the displayed version", as
   expect((await snapshot(other.page)).payments).toMatchObject([
     { id: latest.id, amountMinor: 4_500, note: "Keep this draft", paidOn: latest.paidOn },
   ]);
+});
+
+test("a review editor recreates a remotely deleted payment with its open draft", async ({ app, page, newDevice }) => {
+  await page.clock.install({ time: Date.now() });
+  await seedPerson(page, app.url);
+  await cash(page, "25");
+  await synced(page);
+  const other = await newDevice();
+  await openLedger(other.page, app.url);
+  await person(other.page);
+
+  await goOffline(other.page);
+  await cash(other.page, "45", { fromMinor: 2_500 });
+  await cash(page, "30", { fromMinor: 2_500 });
+  await synced(page);
+  const [original] = (await snapshot(page)).payments;
+  await other.context.setOffline(false);
+  const item = await review(other.page, "Edit payment");
+  await item.getByRole("button", { name: "Edit and resubmit" }).click();
+  const editor = other.page.getByRole("dialog", { name: "Resubmit payment" });
+  await editor.getByLabel("Note (optional)").fill("Keep this draft");
+
+  await page.getByRole("button", { name: `Delete payment of ${money(3_000)}` }).click();
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
+  await page.clock.fastForward(8_000);
+  await synced(page);
+  expect((await snapshot(page)).payments).toEqual([]);
+  await other.page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(item.getByText("No record", { exact: true })).toBeVisible();
+
+  await editor.getByRole("button", { name: "Resubmit", exact: true }).click();
+  await expect(editor.getByRole("alert")).toContainText("This record was removed while you were editing.");
+  await expect(editor.getByLabel("Note (optional)")).toHaveValue("Keep this draft");
+  const recreate = editor.getByRole("button", { name: "Recreate with my changes" });
+  await expect(recreate).toBeEnabled();
+  await recreate.click();
+  await expect(editor).toBeHidden();
+  await synced(other.page);
+  expect((await snapshot(other.page)).payments).toMatchObject([
+    { id: original.id, amountMinor: 4_500, note: "Keep this draft" },
+  ]);
+});
+
+test("a held purchase can be resubmitted for a new person", async ({ app, page, newDevice }) => {
+  await seedPerson(page, app.url);
+  const [original] = (await snapshot(page)).purchases;
+  const other = await newDevice();
+  await openLedger(other.page, app.url);
+  await person(other.page);
+
+  async function editPurchase(device: Page, item: string) {
+    await device.getByRole("button", { name: "Edit Kitchen towels", exact: true }).click();
+    const editor = device.getByRole("dialog", { name: "Edit purchase" });
+    await editor.getByLabel("What", { exact: true }).fill(item);
+    await save(editor);
+  }
+  await goOffline(other.page);
+  await editPurchase(other.page, "Tea towels");
+  await editPurchase(page, "Bath towels");
+  await synced(page);
+  await other.context.setOffline(false);
+  const item = await review(other.page, "Edit purchase");
+  await item.getByRole("button", { name: "Edit and resubmit" }).click();
+  const editor = other.page.getByRole("dialog", { name: "Resubmit purchase" });
+  await editor.getByRole("button", { name: "+ New person", exact: true }).click();
+  await editor.getByLabel("Name", { exact: true }).fill("Dad");
+  await editor.getByRole("button", { name: "Resubmit", exact: true }).click();
+  await expect(editor).toBeHidden();
+  await synced(other.page);
+  const committed = await snapshot(other.page);
+  const dad = committed.people.find(person => person.name === "Dad");
+  expect(dad).toBeDefined();
+  expect(committed.purchases).toMatchObject([{ id: original.id, item: "Tea towels", personId: dad!.id }]);
 });
 
 test("restore review prefills an offline payment edit when the backup lacks that payment", async ({

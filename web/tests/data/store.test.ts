@@ -650,6 +650,56 @@ test("restore checks connectivity, revision and an empty queue, then imports una
   await assert.rejects(store.commitRestore(await store.previewRestore(file)), /pending changes/);
 });
 
+test("a backup re-export preserves an IANA alias and can be previewed", async () => {
+  const { store, server } = harness({ rules: ledger });
+  const original = initial();
+  server.replace({ ...original, settings: { ...original.settings!, timeZone: "US/Eastern" } });
+  await store.start();
+  const exported = await store.exportBackup();
+  assert.equal(exported.timeZone, "US/Eastern");
+  assert.equal((await store.previewRestore(JSON.stringify(exported))).backup.timeZone, "US/Eastern");
+  await assert.rejects(store.previewRestore({ ...exported, timeZone: "us/eastern" }), /Invalid ledger time zone/);
+});
+
+test("review resubmission queues the new person before the purchase and retains later dependencies", async () => {
+  const { store, server, clock, dbName } = harness({ rules: ledger });
+  await store.start();
+  clock.online = false;
+  const saved = await store.updateRecord("purchase", purchase.id, token(store, purchase), { item: "Local edit" });
+  assert.equal(saved.status, "saved");
+  server.result.decide = () => ({ status: "conflict", code: "conflict", current: purchase });
+  clock.online = true;
+  await store.syncNow();
+  const [held] = store.getSnapshot().reviewItems;
+  const later = { ...held.op, id: crypto.randomUUID(), kind: "update", baseVersion: refund.version,
+    recordType: "refund", recordId: refund.id, patch: { note: "Later change" } } as const;
+  const db = await openLedger(dbName);
+  await changeLocal(db, store.getSnapshot().sessionEpoch ?? undefined, state => {
+    state.queue.push({ op: later, state: "sendable", order: 2, people: [person.id], local: refund, dependencies: [held.op.id] });
+  });
+  clock.online = false;
+  const newPerson = { name: "New person", payday: null, archived: false };
+  const invalid = await store.editAndResubmit(held.op.id, { totalMinor: 1 }, held, newPerson);
+  assert.equal(invalid.status, "invalid");
+  assert.deepEqual((await readLocal(db)).queue.map(row => row.op.id), [held.op.id, later.id]);
+  db.close();
+  assert.equal(store.getSnapshot().reviewItems[0].op.id, held.op.id);
+  const result = await store.editAndResubmit(held.op.id, { item: "Local edit" }, held, newPerson);
+  assert.equal(result.status, "saved");
+
+  server.result.decide = undefined;
+  clock.online = true;
+  await store.syncNow();
+  const [createPerson, updatePurchase, updateRefund] = server.operations.at(-1)!.items;
+  assert.equal(createPerson.op.recordType, "person");
+  assert.equal(createPerson.op.kind, "create");
+  assert.equal(updatePurchase.op.id, result.opId);
+  assert.deepEqual(updatePurchase.deps, [createPerson.op.id]);
+  assert.equal(updateRefund.op.id, later.id);
+  assert.deepEqual(updateRefund.deps, [createPerson.op.id, updatePurchase.op.id]);
+  assert.equal(server.snapshot.purchases[0].personId, createPerson.op.recordId);
+});
+
 test("restore review update uses the restored record as a base", async () => {
   const { store, server } = harness();
   await store.start();

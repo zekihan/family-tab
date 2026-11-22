@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { EditToken, RestorePreview, ReviewItem, SaveResult } from "../data/index.ts";
 import { isValidDate } from "../ledger/index.ts";
 import { SETTINGS_ID } from "../types.ts";
-import type { LedgerRecord, Settings } from "../types.ts";
+import type { LedgerRecord, Person, Settings } from "../types.ts";
 import { RecordSummary, SaveForm, Sheet, useLedgerUI, useSave } from "./components.tsx";
 import { CashForm, PersonForm, PurchaseForm, ZoneForm } from "./forms.tsx";
 import { patchBetween, recordLabels, recordName, reviewActions } from "./presentation.ts";
@@ -128,9 +128,11 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
     const value = text(key);
     return value && isValidDate(value) ? value : null;
   };
-  const commit = (fields: Record<string, unknown>): Promise<SaveResult> => {
-    const patch = server && item.server ? patchBetween({ ...item.server }, fields) : fields;
-    return store.editAndResubmit(op.id, patch, reviewed);
+  const commit = (fields: Record<string, unknown>, recreateGeneration?: string, newPerson?: Omit<Person, "id" | "version">): Promise<SaveResult> => {
+    const opened = recreateGeneration === undefined ? reviewed : { ...reviewed, server: null, generation: recreateGeneration };
+    if (opened !== reviewed) setReviewed(opened);
+    const patch = opened.server && item.server ? patchBetween({ ...item.server }, fields) : fields;
+    return store.editAndResubmit(op.id, patch, opened, newPerson);
   };
   const target = {
     commit, onSaved,
@@ -149,7 +151,9 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
     case "person": return <PersonForm {...target} initial={{
       ...base, name: text("name") ?? "", payday: integer("payday"), archived: initial.archived === true,
     }} />;
-    case "purchase": return <PurchaseForm {...target} originalDate={server && "boughtOn" in server ? server.boughtOn : null} initial={{
+    case "purchase": return <PurchaseForm {...target}
+      commitWithNewPerson={(fields, person, generation) => commit(fields, generation, person)}
+      originalDate={server && "boughtOn" in server ? server.boughtOn : null} initial={{
       ...base, personId, item: text("item") ?? "", totalMinor: integer("totalMinor") ?? 0,
       plan: initial.plan === "installments" ? "installments" : "once", boughtOn: date("boughtOn") ?? today,
       dueDate: date("dueDate"), count: integer("count"), firstDue: date("firstDue"), dueDay: integer("dueDay"), note: text("note"),
