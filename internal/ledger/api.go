@@ -1,6 +1,10 @@
 package ledger
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 var errUnimplemented = errors.New("unimplemented")
 
@@ -42,5 +46,10 @@ func ValidateChange(before, after *Records, change Change, today string) *RuleEr
 
 // Today returns the calendar date in the IANA zone at the given Unix time.
 func Today(timeZone string, unixSeconds int64) (string, error) {
-	return "", errUnimplemented
+	loc, err := time.LoadLocation(timeZone)
+	if err != nil {
+		return "", fmt.Errorf("load time zone %q: %w", timeZone, err)
+	}
+
+	return time.Unix(unixSeconds, 0).In(loc).Format(time.DateOnly), nil
 }
