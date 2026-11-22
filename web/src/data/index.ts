@@ -6,7 +6,8 @@ import * as ledger from "../ledger/index.ts";
 import type { LedgerView, RuleError } from "../ledger/index.ts";
 import { SETTINGS_ID } from "../types.ts";
 import type {
-  BackupFile, LedgerRecord, Me, Operation, Receipt, RecordFields, Records, RecordType, RestoreRequest, Snapshot,
+  BackupFile, LedgerRecord, Me, Operation, Receipt, RecordFields, Records, RecordType, RecordWithoutVersion,
+  RestoreRequest, Snapshot,
 } from "../types.ts";
 import { AuthError, createApi, NetworkError, ServerError } from "./api.ts";
 import { backupRecords, countRecords, parseBackup, reviewOperation, reviewRecord, validPatch } from "./backup.ts";
@@ -624,7 +625,8 @@ export function createStore(options: StoreOptions = {}) {
         return invalid("Wait for the undo window to end before recording cash returned.");
       }
       const { source: _source, ...fields } = input as typeof input & { source?: unknown };
-      const record = { ...fields, id } as Omit<LedgerRecord, "version">;
+      // RecordFields<T> with this id is the create payload. A generic spread does not narrow to that union.
+      const record = { ...fields, id } as unknown as RecordWithoutVersion;
       return enqueueWithPerson(state, { ...newOperation(state.snapshot.generation, type, id), kind: "create", record }, before, person);
     });
   }

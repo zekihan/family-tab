@@ -1,5 +1,5 @@
 import type {
-  LedgerRecord, Operation, Receipt, RecordByType, Records, RecordType, UnappliedOperation,
+  LedgerRecord, Operation, Receipt, RecordByType, RecordPatch, Records, RecordType, UnappliedOperation,
 } from "../types.ts";
 import type { RuleError } from "../ledger/index.ts";
 
@@ -28,10 +28,10 @@ export function sameValue(a: unknown, b: unknown): boolean {
   return a === b;
 }
 
-export function patchFields(type: RecordType, fields: Record<string, unknown>) {
+export function patchFields(type: RecordType, fields: Record<string, unknown>): RecordPatch {
   return Object.fromEntries(Object.entries(fields).filter(([key, value]) =>
     value !== undefined && key !== "id" && key !== "version" && key !== "source" &&
-    !(type === "refund" && key === "purchaseId") && !(type === "settings" && key === "currency")));
+    !(type === "refund" && key === "purchaseId") && !(type === "settings" && key === "currency"))) as RecordPatch;
 }
 
 export function proposedRecord(current: LedgerRecord | null, op: Operation): LedgerRecord | null {

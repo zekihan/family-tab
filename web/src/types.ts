@@ -96,8 +96,27 @@ export interface RecordByType {
   payout: Payout;
 }
 
-/** The editable fields of a record: everything but its ID, version and server-set source. */
+/** Client-supplied fields of a record, without its id, version or server-set source. */
 export type RecordFields<T extends RecordType> = Omit<RecordByType[T], "id" | "version" | "source">;
+
+// Omit on a union keeps only keys shared by every member. Distribute so each
+// record keeps its own fields (docs/PROTOCOL.md sections 2 and 3).
+type EachOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** create.record: the full record without version, and without source. */
+export type RecordWithoutVersion = EachOmit<LedgerRecord, "version" | "source">;
+
+type NotPatchable<T extends RecordType> =
+  | "id"
+  | "version"
+  | "source"
+  | (T extends "refund" ? "purchaseId" : never)
+  | (T extends "settings" ? "currency" : never);
+
+/** update.patch: changed fields only. id, version, source, refund.purchaseId and settings.currency are not patchable. */
+export type RecordPatch = {
+  [T in RecordType]: Partial<Omit<RecordByType[T], NotPatchable<T>>>
+}[RecordType];
 
 interface OperationBase {
   id: string;
@@ -110,13 +129,13 @@ interface OperationBase {
 
 export type CreateOperation = OperationBase & {
   kind: "create";
-  record: Omit<LedgerRecord, "version" | "source">;
+  record: RecordWithoutVersion;
 };
 
 export type UpdateOperation = OperationBase & {
   kind: "update";
   baseVersion: string;
-  patch: Record<string, unknown>;
+  patch: RecordPatch;
 };
 
 export type DeleteOperation = OperationBase & {

@@ -59,7 +59,7 @@ const types = {
   refund: recordFields.refunds, payout: recordFields.payouts,
 } as const;
 
-// A create record has no version and no source; the server sets both.
+// A create record has no version. Purchases, payments and refunds also omit source; the server sets it.
 function createFields(type: RecordType): Record<string, FieldType> {
   const { source: _source, ...fields } = types[type] as Record<string, FieldType>;
   return fields;
