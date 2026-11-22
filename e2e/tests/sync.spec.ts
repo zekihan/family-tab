@@ -56,6 +56,42 @@ for (const plan of ["once", "installments"] as const) {
   });
 }
 
+test("selecting installments uses the payday synced while the draft was on all at once", async ({ app, page, context }) => {
+  const now = "2025-02-15T12:00:00Z";
+  await page.clock.setFixedTime(now);
+  await setup(page, app.url);
+  await purchase(page, { item: "Towels", price: "100", newPerson: "Mom", payday: "30" });
+  await person(page);
+  await synced(page);
+
+  const other = await context.newPage();
+  await other.clock.setFixedTime(now);
+  await other.goto(page.url());
+  await other.getByRole("button", { name: "Edit person" }).click();
+  const editor = other.getByRole("dialog", { name: "Edit person" });
+
+  await page.getByRole("button", { name: "Add purchase", exact: true }).click();
+  const draft = page.getByRole("dialog", { name: "Add purchase" });
+  await draft.getByLabel("What").fill("Vacuum");
+  await draft.getByLabel("Total price").fill("600");
+  await expect(draft.getByRole("button", { name: "All at once", pressed: true })).toBeVisible();
+
+  await editor.getByLabel("Name", { exact: true }).fill("Mom updated");
+  await editor.getByLabel("Payday (optional)").fill("18");
+  await save(editor);
+  await synced(other);
+  await expect(draft.getByRole("button", { name: "Mom updated" })).toBeVisible();
+
+  await draft.getByRole("button", { name: "In installments" }).click();
+  await expect(draft.getByLabel("First due date", { exact: true })).toHaveValue("18.02.2025");
+  await expect(draft.getByText(/18 Jul 2025/)).toBeVisible();
+  await save(draft);
+  await synced(page);
+  expect((await snapshot(page)).purchases.find(row => row.item === "Vacuum")).toMatchObject({
+    firstDue: "2025-02-18", dueDay: 18,
+  });
+});
+
 test("setup and settings save time zones with IANA casing", async ({ app, page }) => {
   await setup(page, app.url, "europe/istanbul");
   expect((await snapshot(page)).settings?.timeZone).toBe("Europe/Istanbul");

@@ -65,6 +65,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const whoErrorId = useId();
   const [who, setWho] = useState(initial?.personId ?? personId ?? (active.length === 1 ? active[0].id : ""));
   const person = eligible.find(person => person.id === who);
+  const personPayday = person?.payday ?? null;
   const [newPerson, setNewPerson] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPayday, setNewPayday] = useState("");
@@ -77,7 +78,8 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const [customDue, setCustomDue] = useState(initial?.dueDate ?? today);
   const [countText, setCountText] = useState(String(initial?.count ?? 6));
   const [other, setOther] = useState(!!initial?.count && !installmentCounts.includes(initial.count));
-  const [personStart, setPersonStart] = useState(() => defaultInstallmentStart(today, person?.payday ?? null));
+  const [installmentDefault, setInstallmentDefault] = useState(() => initial?.plan === "installments"
+    ? defaultInstallmentStart(today, personPayday) : null);
   const [first, setFirst] = useState(initial?.firstDue ? { firstDue: initial.firstDue, dueDay: initial.dueDay! } : null);
   const firstDueField = useRef<DateFieldHandle>(null);
   const [boughtOn, setBoughtOn] = useState<string | null>(null);
@@ -85,13 +87,16 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const save = useRecordForm("purchase", target);
   const newNameInput = useRef<HTMLInputElement>(null);
 
-  const payday = newPerson ? (newPayday ? Number(newPayday) : null) : person?.payday ?? null;
+  const newPersonPayday = Number(newPayday) || null;
+  const payday = newPerson ? newPersonPayday : personPayday;
   const shortcuts = dueShortcuts(today, payday);
-  const defaultStart = newPerson ? defaultInstallmentStart(today, payday) : personStart;
+  const defaultStart = installmentDefault ?? defaultInstallmentStart(today, payday);
   const start = first ?? defaultStart;
   const { choice } = selectedDue;
   const onceDue = choice === "custom" ? customDue : selectedDue.date;
-  const displayedChoice = choice === "none" || choice === "custom" || shortcuts[choice] === onceDue ? choice : "custom";
+  let displayedChoice = choice;
+  if (onceDue === null) displayedChoice = "none";
+  else if (choice !== "none" && choice !== "custom" && shortcuts[choice] !== onceDue) displayedChoice = "custom";
   const due = plan === "once" ? onceDue : start.firstDue;
   const date = purchaseDate(boughtOn, initial?.boughtOn ?? today, due);
   const parsed = parseAmount(amount);
@@ -101,11 +106,18 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const previewText = preview && (preview.minAmount === preview.maxAmount
     ? `${count} × ${formatTRY(preview.minAmount)}` : `${count} × ${formatTRY(preview.minAmount)}–${formatTRY(preview.maxAmount)}`);
 
+  function changePersonDates(nextPayday: number | null) {
+    if (choice !== "none" && choice !== "custom") {
+      setSelectedDue({ choice, date: dueShortcuts(today, nextPayday)[choice] });
+    }
+    setInstallmentDefault(plan === "installments" ? defaultInstallmentStart(today, nextPayday) : null);
+  }
+
   function selectPerson(id: string) {
+    if (newPerson || id !== who) changePersonDates(eligible.find(row => row.id === id)?.payday ?? null);
     setWhoMissing(false);
     setNewPerson(false);
     setWho(id);
-    if (id !== who) setPersonStart(defaultInstallmentStart(today, eligible.find(row => row.id === id)?.payday ?? null));
   }
 
   function selectDue(key: DueChoice) {
@@ -153,6 +165,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
           {row.name}{row.archived ? " (archived)" : ""}
         </Chip>)}
         <Chip selected={newPerson} onClick={() => {
+          changePersonDates(newPerson ? personPayday : newPersonPayday);
           setWhoMissing(false);
           setNewPerson(!newPerson);
           if (!newPerson) requestAnimationFrame(() => newNameInput.current?.focus());
@@ -162,14 +175,21 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
     </fieldset>
     {newPerson && <div className="inline-fields">
       <label className="field">Name<input ref={newNameInput} required value={newName} onChange={event => setNewName(event.target.value)} /></label>
-      <label className="field">Payday (optional)<input type="number" min="1" max="31" step="1" value={newPayday} onChange={event => setNewPayday(event.target.value)} /></label>
+      <label className="field">Payday (optional)<input type="number" min="1" max="31" step="1" value={newPayday} onChange={event => {
+        const value = event.target.value;
+        setNewPayday(value);
+        changePersonDates(Number(value) || null);
+      }} /></label>
     </div>}
     <label className="field">What<input required value={item} placeholder="e.g. Vacuum cleaner" onChange={event => setItem(event.target.value)} /></label>
     <AmountField label="Total price" value={amount} onChange={setAmount} />
     <fieldset><legend>How they pay back</legend>
       <div className="segmented">
         <Chip selected={plan === "once"} onClick={() => setPlan("once")}>All at once</Chip>
-        <Chip selected={plan === "installments"} onClick={() => setPlan("installments")}>In installments</Chip>
+        <Chip selected={plan === "installments"} onClick={() => {
+          if (installmentDefault === null) setInstallmentDefault(defaultStart);
+          setPlan("installments");
+        }}>In installments</Chip>
       </div>
     </fieldset>
     {plan === "once" ? <fieldset><legend>Due date</legend>

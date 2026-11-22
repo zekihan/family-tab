@@ -254,7 +254,7 @@ export function createStore(options: StoreOptions = {}) {
       : []);
     clearTimeout(undoTimer);
     if (automatic && started && pendingUndo.length) {
-      undoTimer = setTimeout(() => { void syncNow(); },
+      undoTimer = setTimeout(() => { void refresh().finally(syncNow); },
         Math.max(0, Math.min(...pendingUndo.map(row => row.deadline)) - time));
     }
     publish({

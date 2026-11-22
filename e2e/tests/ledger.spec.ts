@@ -259,6 +259,58 @@ test("a purchase synced from another tab clears the stale payment shortcut witho
   expect((await snapshot(page)).payments.map(payment => payment.amountMinor)).toEqual([10_000]);
 });
 
+test("changing the purchase person recalculates a payday shortcut and keeps a custom date", async ({ app, page }) => {
+  await page.clock.setFixedTime("2025-02-16T12:00:00Z");
+  await setup(page, app.url);
+  await purchase(page, { item: "Towels", price: "100", newPerson: "Mom", payday: "15" });
+  await purchase(page, { item: "Socks", price: "100", newPerson: "Dad", payday: "25" });
+  await purchase(page, { item: "Shoes", price: "100", newPerson: "Sam" });
+
+  const draft = page.getByRole("dialog", { name: "Add purchase" });
+  const chip = (name: string) => draft.getByRole("button", { name, exact: true });
+  const payday = draft.getByRole("button", { name: "Their payday", pressed: true });
+  await page.getByRole("button", { name: "+ Add purchase", exact: true }).click();
+  await chip("Mom").click();
+  await chip("Their payday").click();
+  await expect(draft.getByText("15 Mar 2025", { exact: true })).toBeVisible();
+  await chip("Dad").click();
+  await expect(payday).toBeVisible();
+  await expect(draft.getByText("25 Feb 2025", { exact: true })).toBeVisible();
+  await draft.getByLabel("What").fill("Vacuum");
+  await draft.getByLabel("Total price").fill("500");
+  await save(draft);
+
+  await page.getByRole("button", { name: "+ Add purchase", exact: true }).click();
+  await chip("Mom").click();
+  await chip("Their payday").click();
+  await chip("Sam").click();
+  await expect(draft.getByRole("button", { name: "No fixed date", pressed: true })).toBeVisible();
+  await chip("Mom").click();
+  await chip("Their payday").click();
+  await chip("+ New person").click();
+  await draft.getByLabel("Name", { exact: true }).fill("Alex");
+  await draft.getByLabel("Payday (optional)").fill("20");
+  await expect(payday).toBeVisible();
+  await expect(draft.getByText("20 Feb 2025", { exact: true })).toBeVisible();
+  await chip("Custom date").click();
+  const customDate = draft.getByLabel("Custom due date", { exact: true });
+  await customDate.fill("2025-03-03");
+  await chip("Sam").click();
+  await expect(customDate).toHaveValue("03.03.2025");
+  await draft.getByLabel("What").fill("Desk");
+  await draft.getByLabel("Total price").fill("500");
+  await save(draft);
+  await synced(page);
+
+  const { people, purchases } = await snapshot(page);
+  expect(purchases.find(row => row.item === "Vacuum")).toMatchObject({
+    personId: people.find(row => row.name === "Dad")!.id, dueDate: "2025-02-25",
+  });
+  expect(purchases.find(row => row.item === "Desk")).toMatchObject({
+    personId: people.find(row => row.name === "Sam")!.id, dueDate: "2025-03-03",
+  });
+});
+
 test("Home due amounts share a baseline at 390 pixels in both color schemes", async ({ app, page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await setup(page, app.url);
@@ -298,6 +350,29 @@ test("Home keeps the behind-plan chip on one line at 390 pixels in both color sc
     });
     expect({ lines, underName, fits }, colorScheme).toEqual({ lines: 1, underName: true, fits: true });
   }
+});
+
+test("Home wraps a large behind-plan chip within its row at 340 pixels", async ({ app, page }) => {
+  await page.setViewportSize({ width: 340, height: 844 });
+  await setup(page, app.url);
+  await purchase(page, { item: "Sofa", price: "129999.99", newPerson: "Mom", dueDate: "2020-01-01" });
+  const row = page.getByRole("link", { name: /^Mom .*Behind plan/ });
+  const chip = row.getByText("129.999,99 TL due by today · Behind plan", { exact: true });
+  await expect(chip).toBeVisible();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  const layout = await chip.evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const text = Array.from(range.getClientRects());
+    const chipBox = element.getBoundingClientRect();
+    const rowBox = element.closest("a")!.getBoundingClientRect();
+    return {
+      textFits: text.every(rect => rect.left >= chipBox.left && rect.right <= chipBox.right),
+      chipFits: chipBox.left >= rowBox.left && chipBox.right <= rowBox.right,
+      wraps: new Set(text.map(rect => rect.top)).size > 1,
+    };
+  });
+  expect(layout).toEqual({ textFits: true, chipFits: true, wraps: true });
 });
 
 test("Undo toasts identify the deleted record", async ({ app, page }) => {

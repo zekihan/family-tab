@@ -249,6 +249,26 @@ test("payment deletion can be undone after reload and syncs only when Undo expir
   expect((await snapshot(page)).payments).toEqual([]);
 });
 
+test("Undo expires on time while the session check is stalled", async ({ app, page }) => {
+  await page.clock.install();
+  await seedPerson(page, app.url);
+  await cash(page, "25");
+  await synced(page);
+  await page.clock.pauseAt(new Date(Date.now() + 1_000));
+
+  const stalled = Promise.withResolvers<void>();
+  await page.route("**/api/me", () => { stalled.resolve(); });
+  await page.getByRole("button", { name: `Delete payment of ${money(2_500)}` }).click();
+  const undo = page.getByRole("button", { name: "Undo", exact: true });
+  await expect(undo).toBeVisible();
+  await stalled.promise;
+  await page.clock.fastForward(6_999);
+  await expect(undo).toBeVisible();
+  expect((await snapshot(page)).payments).toHaveLength(1);
+  await page.clock.fastForward(1);
+  await expect(undo).toBeHidden();
+});
+
 test("an expired server session holds an offline payment until the buyer signs in again", async ({
   app, page, request,
 }) => {
