@@ -107,7 +107,7 @@ func migrate(ctx context.Context, tx *Tx) error {
 	return nil
 }
 
-// DB exposes the handle for packages that own their own tables (auth).
+// DB exposes the handle for auth queries and database backups.
 func (s *Store) DB() *sqlx.DB { return s.db }
 
 func (s *Store) Close() error {

@@ -1,5 +1,5 @@
 // Package backup periodically copies the live SQLite database with VACUUM
-// INTO so volume snapshots always contain a consistent, restorable file
+// INTO to publish consistent database files for volume snapshots
 // (TECH_STACK.md section 6, Database backup).
 package backup
 
@@ -27,8 +27,8 @@ var errInvalidSchedule = errors.New(
 	"backup interval must be positive and retention must be nonnegative",
 )
 
-// Run copies the database into dir every interval, keeping the newest keep
-// files, until ctx is done.
+// Run copies the database into dir on startup and every interval, keeping
+// the newest keep files, until ctx is done.
 func Run(ctx context.Context, db *sqlx.DB, dir string, interval time.Duration, keep int) error {
 	if interval <= 0 || keep < 0 {
 		return errInvalidSchedule

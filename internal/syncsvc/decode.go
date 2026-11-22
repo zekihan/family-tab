@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	jsonv2 "encoding/json/v2"
 
@@ -48,7 +49,7 @@ func decodeChange[T any](
 }
 
 // decodePayload validates the operation against the record shape. For a backup
-// there is no base record to check, so edits use the zero value for that shape.
+// there is no base record to check, so edits use only its shape.
 // A create gets the given source on record types that carry one.
 func decodePayload[T any](
 	op *protocol.Operation, fields recordFields, source string,
@@ -249,6 +250,15 @@ func decodeFields(raw json.RawMessage, shape recordFields) (recordFields, error)
 
 		if string(value) == "null" && !nullableField(key) {
 			return nil, fmt.Errorf("%w: field %q cannot be null", errPayload, key)
+		}
+	}
+
+	if raw := fields["aliases"]; raw != nil {
+		var aliases []*string
+
+		err := jsonv2.Unmarshal(raw, &aliases)
+		if err != nil || slices.Contains(aliases, nil) {
+			return nil, fmt.Errorf("%w: aliases must be an array of strings", errPayload)
 		}
 	}
 

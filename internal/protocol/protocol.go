@@ -1,9 +1,10 @@
 // Package protocol defines the sync and backup wire types from
-// docs/PROTOCOL.md. It holds no behavior.
+// docs/PROTOCOL.md.
 package protocol
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/zekihan/family-tab/internal/ledger"
 )
@@ -58,15 +59,35 @@ type Receipt struct {
 
 // OpResult is one entry of a /api/sync/ops response: a Receipt, or a held or
 // skipped result that is not stored.
-type OpResult struct {
-	Code       *string         `json:"code"`
-	Reason     *string         `json:"reason,omitempty"`
-	OpID       string          `json:"opId"`
-	Status     string          `json:"status"`
-	Generation string          `json:"generation,omitempty"`
-	Current    json.RawMessage `json:"current,omitempty"`
-	Blocking   []string        `json:"blocking,omitempty"`
-	Revision   int64           `json:"revision,omitempty"`
+type OpResult Receipt
+
+// MarshalJSON preserves required receipt fields and emits only the fields
+// defined for held and skipped operations.
+//
+//nolint:gocritic // A value receiver also covers standalone values passed to json.Marshal.
+func (result OpResult) MarshalJSON() ([]byte, error) {
+	var wire any = Receipt(result)
+
+	if result.Status == StatusHeld || result.Status == StatusSkipped {
+		var generation *string
+		if result.Status == StatusHeld {
+			generation = &result.Generation
+		}
+
+		wire = struct {
+			Code       *string `json:"code"`
+			Generation *string `json:"generation,omitempty"`
+			OpID       string  `json:"opId"`
+			Status     string  `json:"status"`
+		}{OpID: result.OpID, Status: result.Status, Code: result.Code, Generation: generation}
+	}
+
+	data, err := json.Marshal(wire)
+	if err != nil {
+		return nil, fmt.Errorf("encode operation result: %w", err)
+	}
+
+	return data, nil
 }
 
 type Snapshot struct { //nolint:govet // Embedded records first keep the JSON readable.
