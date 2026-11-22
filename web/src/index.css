@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-paid: var(--paid);
+  --color-paid-soft: var(--paid-soft);
+  --color-expected: var(--expected);
+  --color-expected-soft: var(--expected-soft);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+:root {
+  --bg: #f6f4ef;
+  --surface: #fffdf8;
+  --surface-2: #eeebe3;
+  --line: #ddd8cc;
+  --ink: #1f1e1b;
+  --ink-2: #4f4c44;
+  --ink-3: #6b675d;
+  --accent: #2f6f4f;
+  --accent-ink: #ffffff;
+  --paid: #2f7a4f;
+  --paid-soft: rgb(47 122 79 / 0.12);
+  --expected: #9a5b00;
+  --expected-soft: rgb(196 125 20 / 0.14);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151513;
+    --surface: #1d1d1a;
+    --surface-2: #262622;
+    --line: #34332e;
+    --ink: #f1efe8;
+    --ink-2: #c0bdb2;
+    --ink-3: #9d998e;
+    --accent: #6fbf8f;
+    --accent-ink: #0d1f15;
+    --paid: #74c995;
+    --paid-soft: rgb(116 201 149 / 0.14);
+    --expected: #f0b44c;
+    --expected-soft: rgb(240 180 76 / 0.14);
+    color-scheme: dark;
+  }
+}
+
+html,
+body {
+  background: var(--bg);
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
