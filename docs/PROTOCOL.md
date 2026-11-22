@@ -219,3 +219,40 @@ interface ChangeFixture {
 ```
 
 Go runs every change fixture through the server commit path. TypeScript runs the subset its client-side save checks cover.
+
+## 8. Rule interpretations
+
+Where DESIGN.md leaves a detail open, both implementations and the fixtures follow these readings.
+
+### Balances
+
+- **Sort key.** Dated amounts come first, by `dueOn`, then `boughtOn`, then purchase ID (lexicographic, by UTF-16 code units / bytes), then `sequence`. Undated amounts follow, by `boughtOn`, then purchase ID, then `sequence`. Amounts whose adjusted value is zero are skipped by allocation and never count as unpaid.
+- **Net receipts** = sum of the person's payments − sum of their payouts. **Cash shortfall** = max(0, −net receipts). Allocation fills amounts in sort order with max(0, net receipts). **Credit** = what is left after every amount is filled.
+- **Left to pay** = unpaid purchase amounts + cash shortfall. **Due by today** = unpaid part of dated amounts with `dueOn` ≤ today (excludes the shortfall). **Behind plan** = some dated amount with `dueOn` < today is not fully paid.
+- **Due in the next month** = unpaid part of dated amounts with today < `dueOn` ≤ `addMonths(today, 1)`, where `addMonths` keeps today's day clamped to the target month's last day (Jan 31 → Feb 28 or 29).
+- **earliestUnpaidFuture** = the earliest `dueOn` > today among amounts not fully paid, or null.
+- **Coming up** = across all people, archived included, the not-fully-paid amounts in the Due in the next month window, in the sort order above, first eight. `remainingMinor` is the unpaid part. `archived` is the person's archived flag.
+- **Home totals** sum every person, archived included: `leftToPay`, `dueByToday`, `dueNextMonth`, `credit`. `archivedLeftToPay` is the sum of `leftToPay` over archived people. **homeOrder** lists active people only, by Due by today descending, then Left to pay descending, then name (`localeCompare` with locale `tr`, then ID).
+- **Status chip**, first match wins: `credit` when credit > 0; `allPaid` when Left to pay is 0; `dueByToday` when Due by today > 0; `nextDate` with `earliestUnpaidFuture` when it is non-null; else `whenTheyCan`. `behindPlan` is the person's Behind plan flag on the last three kinds, and always false on the first two.
+- **Payment chips**, in this order, each only when its amount is positive: `dueByToday` = cash shortfall + Due by today; `throughNextDue` = cash shortfall + Due by today + the unpaid parts of every amount due on the earliest `dueOn` > today that is not fully paid (omitted when there is no such date); `everything` = Left to pay. `shortfallMinor` is the cash shortfall included in the chip's amount, the same value on all three. The default chip is the first one returned.
+- **PurchaseView** in the client: `leftMinor` = sum of unpaid parts of its adjusted amounts; `refundedMinor` = sum of its refunds; `earliestUnpaidDue` = earliest `dueOn` among its amounts that are not fully paid, or null.
+
+### Record rules
+
+Codes: a missing reference is `not_found`, a repeated ID is `duplicate_id` (IDs are unique across all record types), refunds above the price are `refunds_exceed_total`, and every other record rule is `invalid`.
+
+- Dates must be real calendar dates in `YYYY-MM-DD` form. Settings `timeZone` must load as an IANA zone and must not be `""`, `Local` or `UTC`-aliases other than the literal names `UTC` and `Etc/UTC`.
+- Names and items are non-empty after trimming. Notes, when non-null, are at most 500 characters; names and items at most 200.
+- Amounts and `totalMinor` are integers from 1 through 10,000,000,000.
+- `boughtOn`, `paidOn`, `refundedOn` and `paidOutOn` are ≤ today. `dueDate` and `firstDue` are ≥ `boughtOn`. A refund's `refundedOn` is ≥ its purchase's `boughtOn`.
+- Once: `count`, `firstDue` and `dueDay` are null. Installments: `dueDate` is null, `count` is 2–120, `totalMinor` ≥ `count`, `dueDay` is 1–31, and `firstDue` has the day `min(dueDay, daysInMonth(firstDue))`.
+- Payday, when non-null, is an integer 1–31.
+
+### Change rules and which records an operation checks
+
+- A change runs the record rules on the created or updated record, and on records whose rule depends on it: for a purchase, its refunds (sum and dates); for a refund, its purchase's refund sum. A create also checks the ID is unused. References must exist after the change.
+- The "not in the future" rule is checked only on date fields the change creates or changes, so a time zone change never blocks unrelated later edits.
+- A purchase that is created, or whose `personId` changes, must belong to an active person (`archived_person`). Other edits of a purchase on an archived person are allowed.
+- Deleting a purchase with refunds is `purchase_has_refunds`, with the refund IDs in `blocking`. Deleting a person referenced by any purchase, payment or payout is `person_has_records`, with those IDs in `blocking`.
+- A payout that is created, whose `amountMinor` increases, or whose `personId` changes must satisfy `amountMinor` ≤ the destination person's credit computed on the after-records without this payout, unless `alreadyReturned` is set (`payout_exceeds_credit`). Other changes, including corrections to purchases or payments that leave net receipts negative, are allowed and produce a cash shortfall.
+- Settings: `create` only when none exist; `update` may change only `timeZone`. Every other operation before setup is `not_setup`.
