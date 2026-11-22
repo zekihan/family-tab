@@ -81,6 +81,11 @@ export function SaveForm({ children, onSave, busy, error, stale, onReapply, labe
   stale?: ReturnType<typeof useSave>["stale"]; onReapply?: () => void; label?: string;
 }) {
   const { snapshot } = useLedgerUI();
+  const errorText = useRef<HTMLParagraphElement>(null);
+  // The footer stays put while fields scroll, so bring a new error into view.
+  useEffect(() => {
+    if (error) errorText.current?.scrollIntoView({ block: "nearest" });
+  }, [error]);
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!stale && !snapshot.sync.restoreInProgress && !blocked && !busy) onSave();
@@ -104,7 +109,7 @@ export function SaveForm({ children, onSave, busy, error, stale, onReapply, labe
         {stale.current && <RecordSummary records={snapshot.records} record={stale.current} />}
         {stale.current && onReapply && <button type="button" className="button secondary" onClick={onReapply}>Reapply my changes</button>}
       </div>}
-      {error && <p className="error-text" role="alert">{error}</p>}
+      {error && <p ref={errorText} className="error-text" role="alert">{error}</p>}
     </div>
     <div className="sheet-footer">
       {snapshot.sync.restoreInProgress && <p role="status" className="hint">Restore in progress. Saving is temporarily unavailable.</p>}

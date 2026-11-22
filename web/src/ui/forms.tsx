@@ -48,6 +48,9 @@ export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTar
   const { initial } = target;
   const active = snapshot.records.people.filter(person => !person.archived);
   const eligible = snapshot.records.people.filter(person => !person.archived || person.id === initial?.personId);
+  const [whoMissing, setWhoMissing] = useState(false);
+  const whoField = useRef<HTMLFieldSetElement>(null);
+  const whoErrorId = useId();
   const [who, setWho] = useState(initial?.personId ?? personId ?? (active.length === 1 ? active[0].id : ""));
   const person = eligible.find(person => person.id === who);
   const [newPerson, setNewPerson] = useState(false);
@@ -82,12 +85,19 @@ export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTar
     ? `${count} × ${formatTRY(preview.minAmount)}` : `${count} installments of ${formatTRY(preview.minAmount)} to ${formatTRY(preview.maxAmount)}`);
 
   function selectPerson(id: string) {
+    setWhoMissing(false);
     setNewPerson(false);
     setWho(id);
     if (choice === "payday" && eligible.find(row => row.id === id)?.payday == null) setChoice("none");
   }
 
   function savePurchase() {
+    if (!newPerson && !person) {
+      setWhoMissing(true);
+      whoField.current?.scrollIntoView({ block: "center" });
+      whoField.current?.querySelector("button")?.focus({ preventScroll: true });
+      return;
+    }
     if (!parsed.ok || date.invalid || invalidPlan || !item.trim() || (!newPerson && !person)) {
       save.setError("Choose a person and enter a purchase, amount, and valid dates.");
       return;
@@ -117,16 +127,18 @@ export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTar
   }
 
   return <SaveForm {...save} onSave={savePurchase} blocked={date.invalid || invalidPlan} label={target.commit ? "Resubmit" : "Save"}>
-    <fieldset><legend>Who</legend>
+    <fieldset ref={whoField} aria-describedby={whoMissing ? whoErrorId : undefined}><legend>Who</legend>
       <div className="choices">
         {eligible.map(row => <Chip key={row.id} selected={!newPerson && who === row.id} onClick={() => selectPerson(row.id)}>
           {row.name}{row.archived ? " (archived)" : ""}
         </Chip>)}
         <Chip selected={newPerson} onClick={() => {
+          setWhoMissing(false);
           setNewPerson(!newPerson);
           if (!newPerson) requestAnimationFrame(() => newNameInput.current?.focus());
         }}>+ New person</Chip>
       </div>
+      {whoMissing && <p id={whoErrorId} className="error-text" role="alert">Choose who this purchase is for.</p>}
     </fieldset>
     {newPerson && <div className="inline-fields">
       <label className="field">Name<input ref={newNameInput} required value={newName} onChange={event => setNewName(event.target.value)} /></label>

@@ -149,3 +149,20 @@ test("an invalid purchase date in the collapsed section is revealed when Save is
   await expect(dialog.getByText("Enter the date as day.month.year.")).toBeVisible();
   await expect(dialog).toBeVisible();
 });
+
+test("saving a purchase without a person shows the error by Who on a phone screen", async ({ app, page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page, app.url);
+  await purchase(page, { item: "Kitchen towels", price: "100", newPerson: "Mom" });
+  await purchase(page, { item: "Socks", price: "50", newPerson: "Dad" });
+  await page.getByRole("button", { name: /^\+?\s*Add purchase$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Add purchase" });
+  await dialog.getByLabel("What").fill("Air fryer");
+  await dialog.getByLabel("Total price").fill("4.799,90");
+  await dialog.getByRole("button", { name: "In installments", exact: true }).click();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  const error = dialog.getByRole("alert").filter({ hasText: "Choose who this purchase is for." });
+  await expect(error).toBeInViewport();
+  await expect(dialog.getByRole("group", { name: "Who" }).getByRole("button").first()).toBeFocused();
+  expect((await snapshot(page)).purchases).toHaveLength(2);
+});
