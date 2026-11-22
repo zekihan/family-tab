@@ -1,0 +1,38 @@
+{
+  "name": "payment-chips-shortfall-breakdown",
+  "description": "DESIGN section 6 and PROTOCOL section 8. Payout 2000 less receipts 1000 leaves a cash shortfall of 1000. Add the 3000 due today for 4000, both Dec 1 amounts for 24000, and the later 5000 plus undated 4000 for 33000.",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {"id": "mom", "name": "Mom", "payday": null, "archived": false}
+    ],
+    "purchases": [
+      {"id": "today", "personId": "mom", "item": "Due today", "totalMinor": 3000, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-11-22", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "next-a", "personId": "mom", "item": "First due Dec 1", "totalMinor": 8000, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "next-b", "personId": "mom", "item": "Second due Dec 1", "totalMinor": 12000, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "later", "personId": "mom", "item": "Due Dec 2", "totalMinor": 5000, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-02", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "undated", "personId": "mom", "item": "Undated", "totalMinor": 4000, "boughtOn": "2025-11-01", "plan": "once", "dueDate": null, "count": null, "firstDue": null, "dueDay": null, "note": null}
+    ],
+    "payments": [
+      {"id": "payment", "personId": "mom", "amountMinor": 1000, "paidOn": "2025-11-01", "note": null}
+    ],
+    "refunds": [],
+    "payouts": [
+      {"id": "payout", "personId": "mom", "amountMinor": 2000, "paidOutOn": "2025-11-02", "note": null}
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "people": {
+      "mom": {"leftToPay": 33000, "dueByToday": 3000, "dueNextMonth": 25000, "behindPlan": false, "paymentsReceived": 1000, "cashReturned": 2000, "netReceipts": -1000, "credit": 0, "cashShortfall": 1000, "earliestUnpaidFuture": "2025-12-01"}
+    },
+    "paymentChips": {
+      "mom": [
+        {"kind": "dueByToday", "amountMinor": 4000, "shortfallMinor": 1000},
+        {"kind": "throughNextDue", "amountMinor": 24000, "shortfallMinor": 1000},
+        {"kind": "everything", "amountMinor": 33000, "shortfallMinor": 1000}
+      ]
+    }
+  }
+}

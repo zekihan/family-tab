@@ -1,0 +1,72 @@
+{
+  "name": "delete-purchase-with-refunds",
+  "description": "PROTOCOL section 8: delete-purchase-with-refunds",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "once",
+        "dueDate": "2025-11-22",
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [],
+    "refunds": [
+      {
+        "id": "ref",
+        "purchaseId": "p",
+        "amountMinor": 5000,
+        "refundedOn": "2025-02-01",
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payouts": []
+  },
+  "op": {
+    "id": "op-1",
+    "generation": "g1",
+    "createdAt": "2025-11-22T12:00:00Z",
+    "recordType": "purchase",
+    "recordId": "p",
+    "kind": "delete",
+    "baseVersion": "v1",
+    "preImage": {
+      "id": "p",
+      "personId": "mom",
+      "item": "p",
+      "totalMinor": 10000,
+      "boughtOn": "2025-01-01",
+      "plan": "once",
+      "dueDate": "2025-11-22",
+      "count": null,
+      "firstDue": null,
+      "dueDay": null,
+      "note": null,
+      "version": "v1"
+    }
+  },
+  "expect": {
+    "status": "rejected",
+    "code": "purchase_has_refunds"
+  }
+}

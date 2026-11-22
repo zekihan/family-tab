@@ -1,0 +1,50 @@
+{
+  "name": "refund-excess",
+  "description": "DESIGN sections 5 and 8: refund-excess",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "once",
+        "dueDate": "2025-11-22",
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [],
+    "refunds": [
+      {
+        "id": "r",
+        "purchaseId": "p",
+        "amountMinor": 10001,
+        "refundedOn": "2025-11-01",
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payouts": []
+  },
+  "expect": {
+    "valid": {
+      "code": "refunds_exceed_total"
+    }
+  }
+}

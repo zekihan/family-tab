@@ -179,6 +179,8 @@ interface LedgerFixture {
     comingUp?: ComingUpEntry[];                                // TS only
     chips?: { [personId: string]: StatusChip };                // TS only
     paymentChips?: { [personId: string]: PaymentChip[] };      // TS only
+    homeOrder?: string[];                                      // TS only
+    purchases?: { [purchaseId: string]: Partial<PurchaseView> }; // TS only, PurchaseView from web/src/ledger/index.ts
   };
 }
 

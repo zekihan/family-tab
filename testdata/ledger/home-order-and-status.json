@@ -1,0 +1,50 @@
+{
+  "name": "home-order-and-status",
+  "description": "DESIGN sections 5 and 6 and PROTOCOL section 8. Home sorts active people by due amount, then debt, then Turkish name and ID. The archived balance adds 950 to Home debt, including 900 overdue and 50 upcoming. Emel's 60 credit stays separate.",
+  "timeZone": "Europe/Istanbul",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {"id": "credit", "name": "Emel", "payday": null, "archived": false},
+      {"id": "archived", "name": "Archive", "payday": null, "archived": true},
+      {"id": "ipek", "name": "İpek", "payday": null, "archived": false},
+      {"id": "id-b", "name": "Işık", "payday": null, "archived": false},
+      {"id": "paid", "name": "Ada", "payday": null, "archived": false},
+      {"id": "flex", "name": "Ceren", "payday": null, "archived": false},
+      {"id": "id-a", "name": "Işık", "payday": null, "archived": false},
+      {"id": "large", "name": "Zeliha", "payday": null, "archived": false},
+      {"id": "next", "name": "Deniz", "payday": null, "archived": false},
+      {"id": "urgent", "name": "Zeynep", "payday": null, "archived": false}
+    ],
+    "purchases": [
+      {"id": "archived-overdue", "personId": "archived", "item": "Archive overdue", "totalMinor": 900, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-11-21", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "archived-future", "personId": "archived", "item": "Archive future", "totalMinor": 50, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "ipek-today", "personId": "ipek", "item": "İpek today", "totalMinor": 200, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-11-22", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "b-today", "personId": "id-b", "item": "Second Işık today", "totalMinor": 200, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-11-22", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "flex-undated", "personId": "flex", "item": "Undated", "totalMinor": 100, "boughtOn": "2025-11-01", "plan": "once", "dueDate": null, "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "a-today", "personId": "id-a", "item": "First Işık today", "totalMinor": 200, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-11-22", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "large-overdue", "personId": "large", "item": "Overdue", "totalMinor": 200, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-11-21", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "large-undated", "personId": "large", "item": "Larger undated debt", "totalMinor": 700, "boughtOn": "2025-11-01", "plan": "once", "dueDate": null, "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "next-future", "personId": "next", "item": "Next month", "totalMinor": 400, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-02", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "urgent-today", "personId": "urgent", "item": "Largest amount due", "totalMinor": 300, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-11-22", "count": null, "firstDue": null, "dueDay": null, "note": null}
+    ],
+    "payments": [
+      {"id": "credit-payment", "personId": "credit", "amountMinor": 60, "paidOn": "2025-11-01", "note": null}
+    ],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "valid": true,
+    "home": {"leftToPay": 3250, "dueByToday": 2000, "dueNextMonth": 450, "credit": 60, "archivedLeftToPay": 950},
+    "homeOrder": ["urgent", "large", "id-a", "id-b", "ipek", "next", "flex", "paid", "credit"],
+    "chips": {
+      "credit": {"kind": "credit", "amountMinor": 60, "behindPlan": false},
+      "paid": {"kind": "allPaid", "behindPlan": false},
+      "urgent": {"kind": "dueByToday", "amountMinor": 300, "behindPlan": false},
+      "large": {"kind": "dueByToday", "amountMinor": 200, "behindPlan": true},
+      "next": {"kind": "nextDate", "date": "2025-12-02", "behindPlan": false},
+      "flex": {"kind": "whenTheyCan", "behindPlan": false}
+    }
+  }
+}

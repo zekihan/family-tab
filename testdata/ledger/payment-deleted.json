@@ -1,0 +1,44 @@
+{
+  "name": "payment-deleted",
+  "description": "DESIGN sections 5 and 8: payment-deleted",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "once",
+        "dueDate": "2025-11-22",
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "people": {
+      "mom": {
+        "leftToPay": 10000,
+        "dueByToday": 10000
+      }
+    }
+  }
+}

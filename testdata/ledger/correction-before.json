@@ -1,0 +1,65 @@
+{
+  "name": "correction-before",
+  "description": "DESIGN sections 5 and 8: correction-before",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "once",
+        "dueDate": "2025-11-22",
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [
+      {
+        "id": "pay",
+        "personId": "mom",
+        "amountMinor": 60000,
+        "paidOn": "2025-01-01",
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "refunds": [],
+    "payouts": [
+      {
+        "id": "out",
+        "personId": "mom",
+        "amountMinor": 50000,
+        "paidOutOn": "2025-01-01",
+        "note": null,
+        "version": "v1"
+      }
+    ]
+  },
+  "expect": {
+    "people": {
+      "mom": {
+        "netReceipts": 10000,
+        "leftToPay": 0,
+        "dueByToday": 0,
+        "cashShortfall": 0,
+        "behindPlan": false
+      }
+    }
+  }
+}

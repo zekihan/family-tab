@@ -1,0 +1,72 @@
+{
+  "name": "refund-last-installment",
+  "description": "DESIGN sections 5 and 8: refund-last-installment",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 60000,
+        "boughtOn": "2025-01-01",
+        "plan": "installments",
+        "dueDate": null,
+        "count": 3,
+        "firstDue": "2025-09-15",
+        "dueDay": 15,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [],
+    "refunds": [
+      {
+        "id": "r",
+        "purchaseId": "p",
+        "amountMinor": 15000,
+        "refundedOn": "2025-11-01",
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payouts": []
+  },
+  "expect": {
+    "schedules": {
+      "p": [
+        {
+          "purchaseId": "p",
+          "sequence": 1,
+          "baseMinor": 20000,
+          "adjustedMinor": 20000,
+          "dueOn": "2025-09-15"
+        },
+        {
+          "purchaseId": "p",
+          "sequence": 2,
+          "baseMinor": 20000,
+          "adjustedMinor": 20000,
+          "dueOn": "2025-10-15"
+        },
+        {
+          "purchaseId": "p",
+          "sequence": 3,
+          "baseMinor": 20000,
+          "adjustedMinor": 5000,
+          "dueOn": "2025-11-15"
+        }
+      ]
+    }
+  }
+}

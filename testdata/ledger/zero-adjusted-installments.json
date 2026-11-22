@@ -1,0 +1,50 @@
+{
+  "name": "zero-adjusted-installments",
+  "description": "DESIGN section 5 and PROTOCOL section 8. A 250 refund against three 100 installments zeroes December and November and reduces October to 50. The 50 payment fills October. The zero installments stay in history and do not trigger Behind plan or preempt the next unpaid date of Dec 20.",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {"id": "mom", "name": "Mom", "payday": null, "archived": false}
+    ],
+    "purchases": [
+      {"id": "plan", "personId": "mom", "item": "Refunded plan", "totalMinor": 300, "boughtOn": "2025-10-01", "plan": "installments", "dueDate": null, "count": 3, "firstDue": "2025-10-15", "dueDay": 15, "note": null},
+      {"id": "other", "personId": "mom", "item": "December purchase", "totalMinor": 90, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-20", "count": null, "firstDue": null, "dueDay": null, "note": null}
+    ],
+    "payments": [
+      {"id": "payment", "personId": "mom", "amountMinor": 50, "paidOn": "2025-11-02", "note": null}
+    ],
+    "refunds": [
+      {"id": "refund", "purchaseId": "plan", "amountMinor": 250, "refundedOn": "2025-11-01", "note": null}
+    ],
+    "payouts": []
+  },
+  "expect": {
+    "valid": true,
+    "schedules": {
+      "plan": [
+        {"purchaseId": "plan", "sequence": 1, "baseMinor": 100, "adjustedMinor": 50, "dueOn": "2025-10-15"},
+        {"purchaseId": "plan", "sequence": 2, "baseMinor": 100, "adjustedMinor": 0, "dueOn": "2025-11-15"},
+        {"purchaseId": "plan", "sequence": 3, "baseMinor": 100, "adjustedMinor": 0, "dueOn": "2025-12-15"}
+      ]
+    },
+    "people": {
+      "mom": {"leftToPay": 90, "dueByToday": 0, "dueNextMonth": 90, "behindPlan": false, "earliestUnpaidFuture": "2025-12-20"}
+    },
+    "purchases": {
+      "plan": {"leftMinor": 0, "refundedMinor": 250, "earliestUnpaidDue": null}
+    },
+    "comingUp": [
+      {"personId": "mom", "purchaseId": "other", "sequence": 1, "dueOn": "2025-12-20", "remainingMinor": 90, "archived": false}
+    ],
+    "chips": {
+      "mom": {"kind": "nextDate", "date": "2025-12-20", "behindPlan": false}
+    },
+    "paymentChips": {
+      "mom": [
+        {"kind": "throughNextDue", "amountMinor": 90, "shortfallMinor": 0},
+        {"kind": "everything", "amountMinor": 90, "shortfallMinor": 0}
+      ]
+    }
+  }
+}

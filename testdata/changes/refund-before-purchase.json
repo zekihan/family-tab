@@ -1,0 +1,55 @@
+{
+  "name": "refund-before-purchase",
+  "description": "PROTOCOL section 8: refund-before-purchase",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "once",
+        "dueDate": "2025-11-22",
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "op": {
+    "id": "op-1",
+    "generation": "g1",
+    "createdAt": "2025-11-22T12:00:00Z",
+    "recordType": "refund",
+    "recordId": "ref",
+    "kind": "create",
+    "record": {
+      "id": "ref",
+      "purchaseId": "p",
+      "amountMinor": 100,
+      "refundedOn": "2024-12-31",
+      "note": null
+    }
+  },
+  "expect": {
+    "status": "rejected",
+    "code": "invalid"
+  }
+}

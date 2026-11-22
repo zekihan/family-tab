@@ -1,0 +1,55 @@
+{
+  "name": "credit-after-payout",
+  "description": "DESIGN sections 5 and 8: credit-after-payout",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [],
+    "payments": [
+      {
+        "id": "pay",
+        "personId": "mom",
+        "amountMinor": 50000,
+        "paidOn": "2025-01-01",
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "refunds": [],
+    "payouts": [
+      {
+        "id": "out",
+        "personId": "mom",
+        "amountMinor": 30000,
+        "paidOutOn": "2025-01-01",
+        "note": null,
+        "version": "v1"
+      }
+    ]
+  },
+  "expect": {
+    "people": {
+      "mom": {
+        "credit": 20000,
+        "netReceipts": 20000,
+        "leftToPay": 0
+      }
+    },
+    "chips": {
+      "mom": {
+        "kind": "credit",
+        "amountMinor": 20000,
+        "behindPlan": false
+      }
+    }
+  }
+}

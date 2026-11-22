@@ -1,0 +1,80 @@
+{
+  "name": "payment-chips-shared-next-date",
+  "description": "DESIGN section 8: payment-chips-shared-next-date",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "once",
+        "dueDate": "2025-12-01",
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      },
+      {
+        "id": "q",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "once",
+        "dueDate": "2025-12-01",
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [],
+    "refunds": [],
+    "payouts": [
+      {
+        "id": "out",
+        "personId": "mom",
+        "amountMinor": 1000,
+        "paidOutOn": "2025-01-01",
+        "note": null,
+        "version": "v1"
+      }
+    ]
+  },
+  "expect": {
+    "paymentChips": {
+      "mom": [
+        {
+          "kind": "dueByToday",
+          "amountMinor": 1000,
+          "shortfallMinor": 1000
+        },
+        {
+          "kind": "throughNextDue",
+          "amountMinor": 21000,
+          "shortfallMinor": 1000
+        },
+        {
+          "kind": "everything",
+          "amountMinor": 21000,
+          "shortfallMinor": 1000
+        }
+      ]
+    }
+  }
+}

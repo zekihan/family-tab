@@ -1,0 +1,45 @@
+{
+  "name": "coming-up-first-eight",
+  "description": "DESIGN sections 5 and 6 and PROTOCOL section 8. On Dec 1 the older archived purchase comes first, then a before b by ID. A 50 receipt leaves 150 on a. Another receipt of 60 covers the first installment, leaving sequence 2 due Dec 6. Dec 7 and 8 contribute 170 and 180 to the month total but fall after the eighth row.",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {"id": "beta", "name": "Beta", "payday": null, "archived": false},
+      {"id": "archive", "name": "Archive", "payday": null, "archived": true},
+      {"id": "alpha", "name": "Alpha", "payday": null, "archived": false}
+    ],
+    "purchases": [
+      {"id": "day08", "personId": "beta", "item": "Dec 8", "totalMinor": 180, "boughtOn": "2025-11-02", "plan": "once", "dueDate": "2025-12-08", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "day07", "personId": "alpha", "item": "Dec 7", "totalMinor": 170, "boughtOn": "2025-11-02", "plan": "once", "dueDate": "2025-12-07", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "day06", "personId": "beta", "item": "Monthly installments", "totalMinor": 120, "boughtOn": "2025-11-02", "plan": "installments", "dueDate": null, "count": 2, "firstDue": "2025-11-06", "dueDay": 6, "note": null},
+      {"id": "day05", "personId": "alpha", "item": "Dec 5", "totalMinor": 150, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-05", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "day04", "personId": "archive", "item": "Dec 4", "totalMinor": 140, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-04", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "day03", "personId": "beta", "item": "Dec 3", "totalMinor": 130, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-03", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "day02", "personId": "alpha", "item": "Dec 2", "totalMinor": 120, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-02", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "b", "personId": "beta", "item": "Dec 1 later purchase B", "totalMinor": 300, "boughtOn": "2025-11-02", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "a", "personId": "alpha", "item": "Dec 1 later purchase A", "totalMinor": 200, "boughtOn": "2025-11-02", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "z", "personId": "archive", "item": "Dec 1 oldest purchase", "totalMinor": 100, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null}
+    ],
+    "payments": [
+      {"id": "alpha-payment", "personId": "alpha", "amountMinor": 50, "paidOn": "2025-11-10", "note": null},
+      {"id": "beta-payment", "personId": "beta", "amountMinor": 60, "paidOn": "2025-11-10", "note": null}
+    ],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "valid": true,
+    "home": {"dueNextMonth": 1500},
+    "comingUp": [
+      {"personId": "archive", "purchaseId": "z", "sequence": 1, "dueOn": "2025-12-01", "remainingMinor": 100, "archived": true},
+      {"personId": "alpha", "purchaseId": "a", "sequence": 1, "dueOn": "2025-12-01", "remainingMinor": 150, "archived": false},
+      {"personId": "beta", "purchaseId": "b", "sequence": 1, "dueOn": "2025-12-01", "remainingMinor": 300, "archived": false},
+      {"personId": "alpha", "purchaseId": "day02", "sequence": 1, "dueOn": "2025-12-02", "remainingMinor": 120, "archived": false},
+      {"personId": "beta", "purchaseId": "day03", "sequence": 1, "dueOn": "2025-12-03", "remainingMinor": 130, "archived": false},
+      {"personId": "archive", "purchaseId": "day04", "sequence": 1, "dueOn": "2025-12-04", "remainingMinor": 140, "archived": true},
+      {"personId": "alpha", "purchaseId": "day05", "sequence": 1, "dueOn": "2025-12-05", "remainingMinor": 150, "archived": false},
+      {"personId": "beta", "purchaseId": "day06", "sequence": 2, "dueOn": "2025-12-06", "remainingMinor": 60, "archived": false}
+    ]
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "month-end-2025",
+  "description": "DESIGN section 5 and PROTOCOL section 8. From Jan 31 the window ends on 2025-02-28. It includes 10000 on that date, excludes 2000 due today and excludes 3000 on Mar 1.",
+  "timeZone": "UTC",
+  "today": "2025-01-31",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "once",
+        "dueDate": "2025-02-28",
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      },
+      {"id": "today", "personId": "mom", "item": "Due today", "totalMinor": 2000, "boughtOn": "2025-01-01", "plan": "once", "dueDate": "2025-01-31", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "march", "personId": "mom", "item": "Due after window", "totalMinor": 3000, "boughtOn": "2025-01-01", "plan": "once", "dueDate": "2025-03-01", "count": null, "firstDue": null, "dueDay": null, "note": null}
+    ],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "people": {
+      "mom": {
+        "dueByToday": 2000,
+        "dueNextMonth": 10000
+      }
+    },
+    "comingUp": [
+      {
+        "personId": "mom",
+        "purchaseId": "p",
+        "sequence": 1,
+        "dueOn": "2025-02-28",
+        "remainingMinor": 10000,
+        "archived": false
+      }
+    ]
+  }
+}

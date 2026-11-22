@@ -1,0 +1,38 @@
+{
+  "name": "purchase-deleted-after-partial-payment",
+  "description": "DESIGN sections 5 and 8: purchase-deleted-after-partial-payment",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [],
+    "payments": [
+      {
+        "id": "pay",
+        "personId": "mom",
+        "amountMinor": 5000,
+        "paidOn": "2025-01-01",
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "people": {
+      "mom": {
+        "credit": 5000,
+        "leftToPay": 0
+      }
+    }
+  }
+}

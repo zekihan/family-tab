@@ -1,0 +1,47 @@
+{
+  "name": "allocation-order",
+  "description": "DESIGN section 5 and PROTOCOL section 8. Mom's 200 fills the later-bought dated 50, the oldest undated 100, then 50 of undated a. Dad's 150 fills the oldest Dec 1 purchase for 100, then 50 of dated a. The same-day b purchases receive zero.",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {"id": "mom", "name": "Mom", "payday": null, "archived": false},
+      {"id": "dad", "name": "Dad", "payday": null, "archived": false}
+    ],
+    "purchases": [
+      {"id": "b", "personId": "mom", "item": "Same-day undated second", "totalMinor": 300, "boughtOn": "2025-11-02", "plan": "once", "dueDate": null, "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "a", "personId": "mom", "item": "Same-day undated first", "totalMinor": 200, "boughtOn": "2025-11-02", "plan": "once", "dueDate": null, "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "z", "personId": "mom", "item": "Oldest undated", "totalMinor": 100, "boughtOn": "2025-11-01", "plan": "once", "dueDate": null, "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "dated", "personId": "mom", "item": "Dated and bought last", "totalMinor": 50, "boughtOn": "2025-11-03", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "dated-b", "personId": "dad", "item": "Same-day dated second", "totalMinor": 300, "boughtOn": "2025-11-02", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "dated-a", "personId": "dad", "item": "Same-day dated first", "totalMinor": 200, "boughtOn": "2025-11-02", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null},
+      {"id": "dated-z", "personId": "dad", "item": "Oldest dated", "totalMinor": 100, "boughtOn": "2025-11-01", "plan": "once", "dueDate": "2025-12-01", "count": null, "firstDue": null, "dueDay": null, "note": null}
+    ],
+    "payments": [
+      {"id": "payment", "personId": "mom", "amountMinor": 200, "paidOn": "2025-11-01", "note": null},
+      {"id": "dad-payment", "personId": "dad", "amountMinor": 150, "paidOn": "2025-11-01", "note": null}
+    ],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "valid": true,
+    "people": {
+      "mom": {"leftToPay": 450, "dueByToday": 0, "dueNextMonth": 0, "earliestUnpaidFuture": null},
+      "dad": {"leftToPay": 450, "dueByToday": 0, "dueNextMonth": 450, "earliestUnpaidFuture": "2025-12-01"}
+    },
+    "purchases": {
+      "dated": {"leftMinor": 0},
+      "z": {"leftMinor": 0},
+      "a": {"leftMinor": 150},
+      "b": {"leftMinor": 300},
+      "dated-z": {"leftMinor": 0},
+      "dated-a": {"leftMinor": 150},
+      "dated-b": {"leftMinor": 300}
+    },
+    "comingUp": [
+      {"personId": "dad", "purchaseId": "dated-a", "sequence": 1, "dueOn": "2025-12-01", "remainingMinor": 150, "archived": false},
+      {"personId": "dad", "purchaseId": "dated-b", "sequence": 1, "dueOn": "2025-12-01", "remainingMinor": 300, "archived": false}
+    ]
+  }
+}

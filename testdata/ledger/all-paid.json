@@ -1,0 +1,29 @@
+{
+  "name": "all-paid",
+  "description": "DESIGN sections 5 and 8: all-paid",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "chips": {
+      "mom": {
+        "kind": "allPaid",
+        "behindPlan": false
+      }
+    }
+  }
+}

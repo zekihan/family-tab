@@ -1,0 +1,63 @@
+{
+  "name": "february-clamp-remainder",
+  "description": "DESIGN sections 5 and 8: february-clamp-remainder",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p",
+        "personId": "mom",
+        "item": "p",
+        "totalMinor": 10000,
+        "boughtOn": "2025-01-01",
+        "plan": "installments",
+        "dueDate": null,
+        "count": 3,
+        "firstDue": "2025-02-28",
+        "dueDay": 31,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "schedules": {
+      "p": [
+        {
+          "purchaseId": "p",
+          "sequence": 1,
+          "baseMinor": 3334,
+          "adjustedMinor": 3334,
+          "dueOn": "2025-02-28"
+        },
+        {
+          "purchaseId": "p",
+          "sequence": 2,
+          "baseMinor": 3333,
+          "adjustedMinor": 3333,
+          "dueOn": "2025-03-31"
+        },
+        {
+          "purchaseId": "p",
+          "sequence": 3,
+          "baseMinor": 3333,
+          "adjustedMinor": 3333,
+          "dueOn": "2025-04-30"
+        }
+      ]
+    }
+  }
+}

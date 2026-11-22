@@ -1,0 +1,174 @@
+{
+  "name": "mom-worked-example",
+  "description": "DESIGN sections 5 and 8: mom-worked-example",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": 15,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p-vacuum",
+        "personId": "mom",
+        "item": "p-vacuum",
+        "totalMinor": 1200000,
+        "boughtOn": "2025-09-01",
+        "plan": "installments",
+        "dueDate": null,
+        "count": 6,
+        "firstDue": "2025-09-15",
+        "dueDay": 15,
+        "note": null,
+        "version": "v1"
+      },
+      {
+        "id": "p-towels",
+        "personId": "mom",
+        "item": "p-towels",
+        "totalMinor": 34950,
+        "boughtOn": "2025-11-18",
+        "plan": "once",
+        "dueDate": null,
+        "count": null,
+        "firstDue": null,
+        "dueDay": null,
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "payments": [
+      {
+        "id": "pay-1",
+        "personId": "mom",
+        "amountMinor": 400000,
+        "paidOn": "2025-10-16",
+        "note": null,
+        "version": "v1"
+      }
+    ],
+    "refunds": [],
+    "payouts": []
+  },
+  "expect": {
+    "valid": true,
+    "schedules": {
+      "p-vacuum": [
+        {
+          "purchaseId": "p-vacuum",
+          "sequence": 1,
+          "baseMinor": 200000,
+          "adjustedMinor": 200000,
+          "dueOn": "2025-09-15"
+        },
+        {
+          "purchaseId": "p-vacuum",
+          "sequence": 2,
+          "baseMinor": 200000,
+          "adjustedMinor": 200000,
+          "dueOn": "2025-10-15"
+        },
+        {
+          "purchaseId": "p-vacuum",
+          "sequence": 3,
+          "baseMinor": 200000,
+          "adjustedMinor": 200000,
+          "dueOn": "2025-11-15"
+        },
+        {
+          "purchaseId": "p-vacuum",
+          "sequence": 4,
+          "baseMinor": 200000,
+          "adjustedMinor": 200000,
+          "dueOn": "2025-12-15"
+        },
+        {
+          "purchaseId": "p-vacuum",
+          "sequence": 5,
+          "baseMinor": 200000,
+          "adjustedMinor": 200000,
+          "dueOn": "2026-01-15"
+        },
+        {
+          "purchaseId": "p-vacuum",
+          "sequence": 6,
+          "baseMinor": 200000,
+          "adjustedMinor": 200000,
+          "dueOn": "2026-02-15"
+        }
+      ],
+      "p-towels": [
+        {
+          "purchaseId": "p-towels",
+          "sequence": 1,
+          "baseMinor": 34950,
+          "adjustedMinor": 34950,
+          "dueOn": null
+        }
+      ]
+    },
+    "people": {
+      "mom": {
+        "leftToPay": 834950,
+        "dueByToday": 200000,
+        "dueNextMonth": 200000,
+        "behindPlan": true,
+        "paymentsReceived": 400000,
+        "cashReturned": 0,
+        "netReceipts": 400000,
+        "credit": 0,
+        "cashShortfall": 0,
+        "earliestUnpaidFuture": "2025-12-15"
+      }
+    },
+    "home": {
+      "leftToPay": 834950,
+      "dueByToday": 200000,
+      "dueNextMonth": 200000,
+      "credit": 0,
+      "archivedLeftToPay": 0
+    },
+    "chips": {
+      "mom": {
+        "kind": "dueByToday",
+        "amountMinor": 200000,
+        "behindPlan": true
+      }
+    },
+    "paymentChips": {
+      "mom": [
+        {
+          "kind": "dueByToday",
+          "amountMinor": 200000,
+          "shortfallMinor": 0
+        },
+        {
+          "kind": "throughNextDue",
+          "amountMinor": 400000,
+          "shortfallMinor": 0
+        },
+        {
+          "kind": "everything",
+          "amountMinor": 834950,
+          "shortfallMinor": 0
+        }
+      ]
+    },
+    "comingUp": [
+      {
+        "personId": "mom",
+        "purchaseId": "p-vacuum",
+        "sequence": 4,
+        "dueOn": "2025-12-15",
+        "remainingMinor": 200000,
+        "archived": false
+      }
+    ]
+  }
+}

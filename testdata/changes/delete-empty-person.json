@@ -1,0 +1,40 @@
+{
+  "name": "delete-empty-person",
+  "description": "PROTOCOL section 8: delete-empty-person",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "version": "v1"
+      }
+    ],
+    "purchases": [],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "op": {
+    "id": "op-1",
+    "generation": "g1",
+    "createdAt": "2025-11-22T12:00:00Z",
+    "recordType": "person",
+    "recordId": "mom",
+    "kind": "delete",
+    "baseVersion": "v1",
+    "preImage": {
+      "id": "mom",
+      "name": "Mom",
+      "payday": null,
+      "archived": false,
+      "version": "v1"
+    }
+  },
+  "expect": {
+    "status": "applied"
+  }
+}
