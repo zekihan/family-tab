@@ -84,9 +84,9 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const [customDue, setCustomDue] = useState(initial?.dueDate ?? today);
   const [countText, setCountText] = useState(String(initial?.count ?? 6));
   const [other, setOther] = useState(!!initial?.count && !installmentCounts.includes(initial.count));
-  const [installmentDefault, setInstallmentDefault] = useState(() => initial?.plan === "installments"
-    ? defaultInstallmentStart(today, personPayday) : null);
-  const [first, setFirst] = useState(initial?.firstDue ? { firstDue: initial.firstDue, dueDay: initial.dueDay! } : null);
+  const savedStart = initial?.firstDue ? { firstDue: initial.firstDue, dueDay: initial.dueDay! } : null;
+  const [installmentDefault, setInstallmentDefault] = useState<{ firstDue: string; dueDay: number } | null>(null);
+  const [first, setFirst] = useState(savedStart);
   const firstDueField = useRef<DateFieldHandle>(null);
   const [boughtOn, setBoughtOn] = useState<string | null>(null);
   const [note, setNote] = useState(initial?.note ?? "");
@@ -97,7 +97,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const invalidPayday = newPerson && newPayday !== "" && newPersonPayday === null;
   const payday = newPerson ? newPersonPayday : personPayday;
   const shortcuts = dueShortcuts(today, payday);
-  const defaultStart = installmentDefault ?? defaultInstallmentStart(today, payday);
+  const defaultStart = savedStart ?? installmentDefault ?? defaultInstallmentStart(today, initial ? null : payday);
   const start = first ?? defaultStart;
   const { choice } = selectedDue;
   const onceDue = choice === "custom" ? customDue : selectedDue.date;
@@ -117,7 +117,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
     if (choice !== "none" && choice !== "custom") {
       setSelectedDue({ choice, date: dueShortcuts(today, nextPayday)[choice] });
     }
-    setInstallmentDefault(plan === "installments" ? defaultInstallmentStart(today, nextPayday) : null);
+    if (!initial) setInstallmentDefault(plan === "installments" ? defaultInstallmentStart(today, nextPayday) : null);
   }
 
   function selectPerson(id: string) {
@@ -236,6 +236,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
         <input type="number" required min="2" max="120" step="1" value={countText} onChange={event => setCountText(event.target.value)} />
       </label>}
       <DateField ref={firstDueField} label="First due date" value={start.firstDue} onChange={value => {
+        if (initial && value === start.firstDue) return;
         setFirst(value === defaultStart.firstDue ? defaultStart : { firstDue: value, dueDay: Number(value.slice(8)) });
       }} />
       {start.firstDue && start.firstDue === lastDayOfMonth(start.firstDue) && <label className="check">
@@ -266,11 +267,16 @@ export function PersonForm(target: FormTarget<"person">) {
   const [archived, setArchived] = useState(initial?.archived ?? false);
   const save = useRecordForm("person", target);
   const paydayId = useId();
-  return <SaveForm {...save} onSave={() => save.persist({ name: name.trim(), payday: payday ? Number(payday) : null, archived })}
+  const day = parsePayday(payday);
+  const invalidPayday = payday !== "" && day === null;
+  return <SaveForm {...save} onSave={() => save.persist({ name: name.trim(), payday: day, archived })} blocked={invalidPayday}
     label={target.commit ? "Resubmit" : "Save"}>
     <label className="field">Name<input required value={name} onChange={event => setName(event.target.value)} /></label>
     <div className="field"><label htmlFor={paydayId}>Payday (optional)</label>
-      <input id={paydayId} aria-describedby={`${paydayId}-hint`} type="number" min="1" max="31" step="1" value={payday} onChange={event => setPayday(event.target.value)} />
+      <input id={paydayId} type="number" min="1" max="31" step="1" value={payday}
+        aria-invalid={invalidPayday} aria-describedby={`${paydayId}-${invalidPayday ? "error" : "hint"}`}
+        onChange={event => setPayday(event.target.value)} />
+      {invalidPayday && <p id={`${paydayId}-error`} className="error-text" role="alert">Enter a whole number from 1 to 31.</p>}
       <span id={`${paydayId}-hint`} className="hint">Day of the month. Changes apply to defaults for new purchases.</span>
     </div>
     {target.commit && <label className="check"><input type="checkbox" checked={archived} onChange={event => setArchived(event.target.checked)} /> Archived</label>}

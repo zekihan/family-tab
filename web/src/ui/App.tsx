@@ -74,27 +74,58 @@ function EntrySheet({ action, token, onClose }: { action: EntryAction; token?: E
 
 function HomeMenu() {
   const { store, snapshot } = useLedgerUI();
+  const menu = useRef<HTMLDetailsElement>(null);
+  const syncAttempt = useRef(0);
   const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    function dismissOutside(event: PointerEvent) {
+      const details = menu.current;
+      if (details?.open && event.target instanceof Node && !details.contains(event.target)) details.open = false;
+    }
+    function dismissOnEscape(event: KeyboardEvent) {
+      const details = menu.current;
+      if (!details?.open || event.key !== "Escape") return;
+      details.open = false;
+      details.querySelector("summary")?.focus();
+    }
+    document.addEventListener("pointerdown", dismissOutside, true);
+    document.addEventListener("keydown", dismissOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside, true);
+      document.removeEventListener("keydown", dismissOnEscape);
+    };
+  }, []);
 
   async function sync() {
     if (snapshot.sync.offline) {
       setStatus("Offline");
       return;
     }
+    const attempt = ++syncAttempt.current;
+    function finish(message: string) {
+      if (menu.current?.open && syncAttempt.current === attempt) setStatus(message);
+    }
     setStatus("Syncing…");
     try {
       await store.syncNow();
       const result = store.getSnapshot().sync;
-      if (result.offline) setStatus("Offline");
-      else if (result.needsSignIn) setStatus("Sign in to sync");
-      else if (result.restoreInProgress) setStatus("Restore in progress");
-      else setStatus(result.lastError ? "Sync failed" : "Synced just now");
+      if (result.offline) finish("Offline");
+      else if (result.needsSignIn) finish("Sign in to sync");
+      else if (result.restoreInProgress) finish("Restore in progress");
+      else if (result.needsReview) finish("Changes need review");
+      else finish(result.lastError ? "Sync failed" : "Synced just now");
     } catch {
-      setStatus("Sync failed");
+      finish("Sync failed");
     }
   }
 
-  return <details className="menu">
+  return <details ref={menu} className="menu" onToggle={event => {
+    if (!event.currentTarget.open) {
+      ++syncAttempt.current;
+      setStatus("");
+    }
+  }}>
     <summary className="button secondary">Menu <span aria-hidden="true">⌄</span></summary>
     <nav aria-label="Main menu">
       <button type="button" disabled={status === "Syncing…"} onClick={() => void sync()}>Sync now</button>

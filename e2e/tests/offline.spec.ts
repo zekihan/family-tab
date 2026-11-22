@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixtures";
 import {
   apiHeader, cash, figure, goOffline, homeHeading, money, openLedger, person, purchase, seedPerson,
-  sessionCookie, settings, signIn, snapshot, synced, syncStatus,
+  sessionCookie, settings, setup, signIn, snapshot, synced, syncStatus,
 } from "./ledger";
 
 test.describe("online with an unavailable shell", () => {
@@ -362,4 +362,49 @@ test("offline sign-out purges the local ledger and revokes the old session on re
   await person(page);
   await figure(page, "Payments received", 0);
   expect((await snapshot(page)).payments).toEqual([]);
+});
+
+test("Sync now sends a queued payment after a stalled session check times out", async ({ app, page }) => {
+  await page.clock.install();
+  await seedPerson(page, app.url);
+  await page.clock.pauseAt(new Date(Date.now() + 1_000));
+
+  const stalled = Promise.withResolvers<void>();
+  await page.route("**/api/me", () => { stalled.resolve(); }, { times: 1 });
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await stalled.promise;
+  await cash(page, "25");
+  expect((await snapshot(page)).payments).toEqual([]);
+
+  await page.getByRole("link", { name: "Family Tab", exact: true }).click();
+  await page.locator("summary").filter({ hasText: "Menu" }).click();
+  const menu = page.getByRole("navigation", { name: "Main menu" });
+  await menu.getByRole("button", { name: "Sync now", exact: true }).click();
+  await expect(menu.getByRole("status")).toHaveText("Syncing…");
+  await page.clock.fastForward(20_000);
+
+  await expect(menu.getByRole("status")).toHaveText("Synced just now", { timeout: 3_000 });
+  expect((await snapshot(page)).payments).toMatchObject([{ amountMinor: 2_500 }]);
+});
+
+test("Home updates at ledger midnight while the session check is stalled", async ({ app, page }) => {
+  const beforeMidnight = new Date("2025-01-15T09:59:35Z");
+  await page.clock.install({ time: new Date("2025-01-15T08:00:00Z") });
+  await setup(page, app.url, "Pacific/Kiritimati");
+  await purchase(page, {
+    item: "Due at ledger midnight", price: "100", newPerson: "Mom", dueDate: "2025-01-16",
+  });
+  await synced(page);
+  await page.clock.pauseAt(beforeMidnight);
+  await page.clock.fastForward(20_000);
+  await figure(page, "Due by today", 0);
+
+  const stalled = Promise.withResolvers<void>();
+  let requests = 0;
+  await page.route("**/api/me", () => { requests++; stalled.resolve(); });
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await stalled.promise;
+  await page.clock.fastForward(15_000);
+  await figure(page, "Due by today", 10_000);
+  expect(requests).toBe(1);
 });

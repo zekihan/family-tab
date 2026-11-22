@@ -458,7 +458,13 @@ export function createStore(options: StoreOptions = {}) {
     window.addEventListener("offline", syncNow);
     document.addEventListener("visibilitychange", onVisibility);
     interval = setInterval(() => {
-      if (document.visibilityState === "visible") void syncNow();
+      if (document.visibilityState !== "visible") return;
+      const { records, ledger } = snapshot;
+      if (ledger && records.settings) {
+        const today = rules.todayIn(records.settings.timeZone, now());
+        if (today !== ledger.today) publish({ ...snapshot, ledger: rules.computeLedger(records, today) });
+      }
+      void syncNow();
     }, POLL_MS);
   }
 

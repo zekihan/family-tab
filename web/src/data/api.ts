@@ -31,38 +31,50 @@ export class ServerError extends Error {
 
 export const loginURL = "/auth/login";
 
+const REQUEST_TIMEOUT_MS = 20_000;
+const RESTORE_TIMEOUT_MS = 60_000;
+
 export function createApi(fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {
-  async function request<T>(path: string, decode: (r: Response) => Promise<T>, body?: unknown, method = body === undefined ? "GET" : "POST") {
+  async function request<T>(path: string, decode: (r: Response) => Promise<T>, body?: unknown,
+    method = body === undefined ? "GET" : "POST", timeout = REQUEST_TIMEOUT_MS) {
     const headers = new Headers({ [HEADER_NAME]: HEADER_VALUE });
     if (body !== undefined) headers.set("Content-Type", "application/json");
 
     const authRedirect = path.startsWith("/auth/");
-    let response: Response;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      response = await fetcher(path, {
+      const response = await fetcher(path, {
         method,
         credentials: "same-origin",
         redirect: authRedirect ? "manual" : "follow",
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
       });
+      if (response.status === 401) throw new AuthError();
+      const redirect = authRedirect && (response.type === "opaqueredirect" ||
+        (response.status >= 300 && response.status < 400));
+      if (!response.ok && !redirect) {
+        const error = await response.json().catch(() => {
+          controller.signal.throwIfAborted();
+          return null;
+        });
+        throw new ServerError(response.status, error?.error ?? "http_error",
+          error?.message ?? `Server returned HTTP ${response.status}.`);
+      }
+      try {
+        return await decode(response);
+      } catch (error) {
+        controller.signal.throwIfAborted();
+        if (error instanceof TypeError || error instanceof ServerError) throw error;
+        throw new ServerError(response.status, "invalid_response", "The server response was invalid.");
+      }
     } catch (error) {
+      if (error instanceof AuthError || error instanceof ServerError) throw error;
       throw new NetworkError(error);
-    }
-    if (response.status === 401) throw new AuthError();
-    const redirect = authRedirect && (response.type === "opaqueredirect" ||
-      (response.status >= 300 && response.status < 400));
-    if (!response.ok && !redirect) {
-      const error = await response.json().catch(() => null);
-      throw new ServerError(response.status, error?.error ?? "http_error",
-        error?.message ?? `Server returned HTTP ${response.status}.`);
-    }
-    try {
-      return await decode(response);
-    } catch (error) {
-      if (error instanceof TypeError) throw new NetworkError(error);
-      if (error instanceof ServerError) throw error;
-      throw new ServerError(response.status, "invalid_response", "The server response was invalid.");
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -82,7 +94,7 @@ export function createApi(fetcher: typeof fetch = globalThis.fetch.bind(globalTh
     snapshot: () => json<Snapshot>("/api/snapshot"),
     receipts: (opIds: string[]) => json<ReceiptsResponse>("/api/sync/receipts", { opIds }),
     ops: (body: OpsRequest) => json<OpsResponse>("/api/sync/ops", body),
-    restore: (body: RestoreRequest) => json<RestoreResult>("/api/restore", body),
+    restore: (body: RestoreRequest) => request<RestoreResult>("/api/restore", r => r.json(), body, "POST", RESTORE_TIMEOUT_MS),
   };
 }
 

@@ -544,3 +544,62 @@ test("a stale edit shows the current version and Reapply in view on a phone scre
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Reapply my changes" })).toBeInViewport();
 });
+
+test("re-entering an installment date keeps the saved anchor after a payday change", async ({ app, page }) => {
+  await page.clock.setFixedTime("2025-02-15T12:00:00Z");
+  await setup(page, app.url);
+  await purchase(page, { item: "Vacuum", price: "600", newPerson: "Mom", payday: "28", firstDue: "2025-02-28" });
+  await person(page);
+  await synced(page);
+  const { id } = (await snapshot(page)).purchases[0];
+
+  await page.getByRole("button", { name: "Edit person" }).click();
+  const editPerson = page.getByRole("dialog", { name: "Edit person" });
+  await editPerson.getByLabel("Payday (optional)").fill("30");
+  await save(editPerson);
+  await synced(page);
+
+  const edit = page.getByRole("button", { name: "Edit Vacuum", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Edit purchase" });
+  const firstDue = dialog.getByLabel("First due date", { exact: true });
+  await edit.click();
+  await dialog.getByLabel("What", { exact: true }).fill("Robot vacuum");
+  await firstDue.fill("2025-02-28");
+  await save(dialog);
+  await synced(page);
+  expect((await snapshot(page)).purchases).toMatchObject([
+    { id, item: "Robot vacuum", firstDue: "2025-02-28", dueDay: 28 },
+  ]);
+
+  await page.getByRole("button", { name: "Edit Robot vacuum", exact: true }).click();
+  await firstDue.fill("2025-04-30");
+  await save(dialog);
+  await synced(page);
+  expect((await snapshot(page)).purchases).toMatchObject([{ id, firstDue: "2025-04-30", dueDay: 30 }]);
+
+  await page.getByRole("button", { name: "Edit Robot vacuum", exact: true }).click();
+  await dialog.getByRole("checkbox", { name: "Last day of each month" }).check();
+  await firstDue.fill("2025-04-30");
+  await save(dialog);
+  await synced(page);
+  expect((await snapshot(page)).purchases).toMatchObject([{ id, firstDue: "2025-04-30", dueDay: 31 }]);
+});
+
+test("Edit person shows an inline payday error and blocks Save", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  await page.getByRole("button", { name: "Edit person" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit person" });
+  const payday = dialog.getByLabel("Payday (optional)");
+  const saveButton = dialog.getByRole("button", { name: "Save", exact: true });
+  for (const value of ["0", "32", "1.5"]) {
+    await payday.fill(value);
+    await expect(dialog.getByRole("alert")).toHaveText("Enter a whole number from 1 to 31.", { timeout: 2_000 });
+    await expect(payday).toHaveAttribute("aria-invalid", "true");
+    await expect(saveButton).toBeDisabled();
+  }
+  await payday.fill("31");
+  await expect(dialog.getByRole("alert")).toBeHidden();
+  await save(dialog);
+  await synced(page);
+  expect((await snapshot(page)).people).toMatchObject([{ name: "Mom", payday: 31 }]);
+});

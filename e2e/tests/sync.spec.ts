@@ -621,3 +621,117 @@ test("a payout edited in conflict review can be confirmed above credit", async (
   await synced(other.page);
   expect((await snapshot(other.page)).payouts).toMatchObject([{ amountMinor: 23_000, note: "My updated note" }]);
 });
+
+test("a restore with a stalled response releases Save and recovers by its original operation ID", async ({
+  app, page, context,
+}) => {
+  await page.clock.install();
+  await seedPerson(page, app.url);
+  await settings(page);
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export backup" }).click();
+  const backup = await (await download).path();
+
+  await page.getByRole("link", { name: "Family Tab", exact: true }).click();
+  await person(page);
+  await cash(page, "25");
+  await synced(page);
+  const before = await snapshot(page);
+
+  const other = await context.newPage();
+  await other.goto(app.url);
+  await person(other);
+  await synced(other);
+  await other.getByRole("button", { name: "Record a payment", exact: true }).click();
+  const editor = other.getByRole("dialog", { name: "Record a payment" });
+  await editor.getByLabel("Amount", { exact: true }).fill("50");
+  const saveButton = editor.getByRole("button", { name: "Save", exact: true });
+
+  await settings(page);
+  await page.getByLabel("Choose backup file").setInputFiles(backup);
+  const confirmation = page.getByRole("dialog", { name: "Restore backup" });
+  await expect(confirmation.getByRole("row", { name: "Payments 1 0" })).toBeVisible();
+  await page.clock.pauseAt(new Date(Date.now() + 1_000));
+
+  const committed = Promise.withResolvers<string>();
+  let restoreAttempts = 0;
+  await page.route("**/api/restore", async route => {
+    restoreAttempts++;
+    const response = await route.fetch();
+    expect(await response.json()).toMatchObject({ status: "applied" });
+    committed.resolve(route.request().postDataJSON().opId);
+  });
+  const checkedIds: string[] = [];
+  context.on("request", request => {
+    if (request.url().endsWith("/api/sync/receipts")) checkedIds.push(...request.postDataJSON().opIds);
+  });
+
+  await confirmation.getByRole("button", { name: "Replace ledger" }).click();
+  const opId = await committed.promise;
+  await expect(saveButton).toBeDisabled();
+  await page.clock.fastForward(60_000);
+
+  await expect(confirmation.getByRole("alert")).toHaveText("Could not reach the Family Tab server.", { timeout: 3_000 });
+  await expect(saveButton).toBeEnabled();
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => checkedIds).toContain(opId);
+  await expect(other.locator("dt").filter({ hasText: /^Payments received$/ }).locator("+ dd")).toHaveText(money(0));
+  await save(editor);
+  await synced(other);
+  await figure(other, "Payments received", 5_000);
+  expect(restoreAttempts).toBe(1);
+  const after = await snapshot(other);
+  expect(after.generation).not.toBe(before.generation);
+  expect(after.payments).toMatchObject([{ amountMinor: 5_000 }]);
+});
+
+test("Home menu clears its sync status when reopened", async ({ app, page }) => {
+  await setup(page, app.url);
+  const toggle = page.locator("summary").filter({ hasText: "Menu" });
+  const menu = page.getByRole("navigation", { name: "Main menu" });
+  await toggle.click();
+  await menu.getByRole("button", { name: "Sync now", exact: true }).click();
+  const status = menu.getByRole("status");
+  await expect(status).toHaveText("Synced just now");
+  await toggle.click();
+  await expect(menu).toBeHidden();
+  await toggle.click();
+  await expect(status).toBeEmpty({ timeout: 2_000 });
+});
+
+test("Home menu Sync now reports changes that need review", async ({ app, page, newDevice }) => {
+  await seedPerson(page, app.url);
+  await cash(page, "25");
+  await synced(page);
+  const other = await newDevice();
+  await openLedger(other.page, app.url);
+  await person(other.page);
+  await goOffline(other.page);
+  await cash(other.page, "45", { fromMinor: 2_500 });
+  await cash(page, "30", { fromMinor: 2_500 });
+  await synced(page);
+  await other.context.setOffline(false);
+  await expect(syncStatus(other.page)).toContainText("Some changes need review.");
+  await other.page.getByRole("link", { name: "Family Tab", exact: true }).click();
+  await other.page.locator("summary").filter({ hasText: "Menu" }).click();
+  const menu = other.page.getByRole("navigation", { name: "Main menu" });
+  await menu.getByRole("button", { name: "Sync now", exact: true }).click();
+  await expect(menu.getByRole("status")).toHaveText("Changes need review", { timeout: 2_000 });
+});
+
+for (const dismissal of ["Escape", "outside pointer-down"] as const) {
+  test(`Home menu closes on ${dismissal}`, async ({ app, page }) => {
+    await setup(page, app.url);
+    const toggle = page.locator("summary").filter({ hasText: "Menu" });
+    const menu = page.getByRole("navigation", { name: "Main menu" });
+    await toggle.click();
+    await menu.getByRole("button", { name: "Sync now", exact: true }).focus();
+    if (dismissal === "Escape") {
+      await page.keyboard.press("Escape");
+    } else {
+      await homeHeading(page).dispatchEvent("pointerdown", { bubbles: true, pointerType: "mouse" });
+    }
+    await expect(menu).toBeHidden({ timeout: 2_000 });
+    if (dismissal === "Escape") await expect(toggle).toBeFocused();
+  });
+}
