@@ -18,6 +18,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design and
 | `OIDC_CLIENT_ID` | required | Client ID |
 | `OIDC_CLIENT_SECRET` | empty | Client secret, if the client is confidential |
 | `BUYER_SUBJECT` | required | `sub` of the only identity allowed in |
+| `MCP_CLIENT_ID` | empty | OAuth client whose access tokens may call `/mcp`; MCP is disabled when empty |
+| `MCP_AUDIENCE` | `PUBLIC_URL` + `/mcp` | Resource identifier MCP access tokens must name in `aud` |
 | `LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `DB_PATH` | `./family-tab.db` | SQLite database |
 | `BACKUP_DIR` | empty | Directory for periodic `VACUUM INTO` copies; disabled when empty |
