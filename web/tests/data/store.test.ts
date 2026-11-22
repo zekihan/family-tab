@@ -26,6 +26,7 @@ test("refund and purchase deletion survive reload, block payout, and undo restor
   const removal = await store.deleteRecord("refund", refund.id, token(store, refund));
   assert.equal(removal.status, "saved");
   assert.equal((await store.deleteRecord("purchase", purchase.id, token(store, purchase))).status, "saved");
+  assert.equal((await store.deleteRecord("person", person.id, token(store, person))).status, "saved");
   const file = await store.exportBackup();
   assert.deepEqual(file.refunds, []);
   assert.deepEqual(file.purchases, []);
@@ -38,6 +39,7 @@ test("refund and purchase deletion survive reload, block payout, and undo restor
   await reloaded.start();
   assert.equal(reloaded.getSnapshot().pendingUndo[0].deadline - clock.now, 2000);
   assert.equal(removal.status === "saved" && await reloaded.undo(removal.opId), true);
+  assert.deepEqual(reloaded.getSnapshot().records.people, initial().people);
   assert.deepEqual(reloaded.getSnapshot().records.purchases, [purchase]);
   assert.deepEqual(reloaded.getSnapshot().records.refunds, [refund]);
   const again = await reloaded.deleteRecord("refund", refund.id, token(reloaded, refund));
@@ -47,6 +49,33 @@ test("refund and purchase deletion survive reload, block payout, and undo restor
   await reloaded.syncNow();
   assert.equal(reloaded.canRecordCashReturned("a"), true);
   assert.equal(server.snapshot.refunds.length, 0);
+});
+
+test("undoing a purchase, payment or payout deletion also restores its person", async t => {
+  const paid = { ...payment(), id: "payment", version: "initial-payment" };
+  const paidOut = {
+    id: "payout", version: "initial-payout", personId: person.id, amountMinor: 1, paidOutOn: "2026-11-22", note: null,
+  };
+  for (const [type, collection, record] of [
+    ["purchase", "purchases", purchase],
+    ["payment", "payments", paid],
+    ["payout", "payouts", paidOut],
+  ] as const) {
+    await t.test(type, async () => {
+      const { store, clock, server } = harness();
+      server.replace({ ...initial(), refunds: [], purchases: [], [collection]: [record] });
+      await store.start();
+      clock.online = false;
+      const removed = await store.deleteRecord(type, record.id, token(store, record));
+      assert.equal(removed.status, "saved");
+      assert.equal((await store.deleteRecord("person", person.id, token(store, person))).status, "saved");
+      assert.deepEqual(store.getSnapshot().records.people.map(row => row.id), ["b"]);
+      assert.equal(await store.undo(removed.opId), true);
+      assert.deepEqual(store.getSnapshot().records[collection], [record]);
+      assert.deepEqual(store.getSnapshot().records.people, initial().people);
+      assert.deepEqual(store.getSnapshot().pendingUndo, []);
+    });
+  }
 });
 
 test("applied ops clear; rejection and conflict block their dependents while unrelated ops sync", async () => {
@@ -354,6 +383,41 @@ test("an interrupted restore releases saves and recovers unapplied work using it
   assert.equal(restores, 1);
   assert.equal(store.getSnapshot().generation, server.snapshot.generation);
   assert.deepEqual(store.getSnapshot().reviewItems.map(row => row.op.id), [op.id]);
+});
+
+test("a second restore preserves unapplied work when the first commits after a missing receipt", async () => {
+  const { store, server } = harness();
+  await store.start();
+  const op: Operation = { id: "unapplied", recordType: "person", recordId: person.id, kind: "update",
+    baseVersion: person.version, generation: initial().generation, createdAt: "2026-11-22T00:00:00Z",
+    patch: { name: "From first backup" } };
+  const first = await store.previewRestore(backup([{ order: 0, op, dependencies: [], reason: null }]));
+  const second = await store.previewRestore(backup());
+  server.hook.fetch = async path => {
+    if (path === "/api/restore") throw new TypeError("Disconnected");
+    return undefined;
+  };
+  await assert.rejects(store.commitRestore(first), /Could not reach/);
+  const request = server.calls.find(call => call.path === "/api/restore");
+  assert.ok(request);
+  let checkedMissingReceipt = false;
+  server.hook.fetch = async path => {
+    if (path === "/api/sync/receipts" && !checkedMissingReceipt) {
+      checkedMissingReceipt = true;
+      assert.equal(server.receipts.size, 0);
+    }
+    if (path === "/api/snapshot" && checkedMissingReceipt) {
+      server.hook.fetch = undefined;
+      const response = await server.fetch("/api/restore", { method: "POST", body: JSON.stringify(request.body) });
+      assert.equal((await response.json()).status, "applied");
+    }
+    return undefined;
+  };
+  await assert.rejects(store.commitRestore(second), /previous restore|preview/i);
+  assert.equal(checkedMissingReceipt, true);
+  await store.syncNow();
+  assert.equal(store.getSnapshot().generation, server.snapshot.generation);
+  assert.deepEqual(store.getSnapshot().reviewItems.map(row => [row.op.id, row.restore]), [[op.id, true]]);
 });
 
 test("a lost apply response is reconciled from the stored receipt without sending the operation twice", async () => {

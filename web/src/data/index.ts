@@ -295,9 +295,14 @@ export function createStore(options: StoreOptions = {}) {
     if (!request) return false;
     assertSession(await readLocal(requireDB()), currentEpoch);
     const { receipts } = await api.receipts([request.opId]);
-    const receipt = receipts.find(receipt => receipt.opId === request.opId && receipt.status === "applied");
+    const receipt = receipts.find(receipt => receipt.opId === request.opId);
     if (!receipt) return false;
-    await loadRestoredSnapshot(receipt, currentEpoch);
+    if (receipt.status === "applied") {
+      await loadRestoredSnapshot(receipt, currentEpoch);
+      announce("restoreEnd");
+    } else {
+      await releaseRestore(currentEpoch, false);
+    }
     return true;
   }
 
@@ -531,16 +536,21 @@ export function createStore(options: StoreOptions = {}) {
       undoPeople(row, state.snapshot ?? emptyRecords, records).includes(personId));
   }
 
-  /** Cancel a deletion if its deadline has not passed. Also cancel its pending parent purchase deletion. */
+  /** Cancel a deletion within its undo window, including pending deletions of its parents. */
   async function undo(opId: string): Promise<boolean> {
     const removed = await changeLocal(requireDB(), epoch, state => {
       const row = state.queue.find(row => row.op.id === opId);
       if (!row || row.state !== "pendingUndo" || row.deadline <= now()) return false;
       const op = row.op;
-      const purchase = op.recordType === "refund" && op.kind === "delete" && "purchaseId" in op.preImage
-        ? op.preImage.purchaseId : null;
+      if (op.kind !== "delete") return false;
+      const purchaseId = op.recordType === "refund" && "purchaseId" in op.preImage ? op.preImage.purchaseId : null;
+      const purchase = purchaseId === null ? undefined : state.queue.find(entry => entry.state === "pendingUndo" &&
+        entry.op.recordType === "purchase" && entry.op.recordId === purchaseId);
+      const child = purchase?.op ?? op;
+      const personId = child.kind === "delete" && "personId" in child.preImage ? child.preImage.personId : null;
       state.queue = state.queue.filter(entry => entry !== row && !(
-        purchase && entry.state === "pendingUndo" && entry.op.recordType === "purchase" && entry.op.recordId === purchase
+        entry === purchase || (entry.state === "pendingUndo" && entry.op.recordType === "person" &&
+          entry.op.recordId === personId)
       ));
       return true;
     });
@@ -654,7 +664,7 @@ export function createStore(options: StoreOptions = {}) {
   }
 
   async function runRestore(request: RestoreRequest, generation: string, currentEpoch: string | undefined) {
-    let accepted = false;
+    let rejected = false;
     try {
       const database = requireDB();
       const current = await api.snapshot();
@@ -664,16 +674,21 @@ export function createStore(options: StoreOptions = {}) {
       await changeLocal(database, currentEpoch, state => {
         if (state.meta.restore) state.meta.restore.attempted = true;
       }, { duringRestore: true });
-      const restored = await api.restore(request);
-      if (restored.status === "rejected") throw new Error(restored.reason ?? "The ledger changed. Preview the backup again.");
-      accepted = true;
+      const restored = await api.restore(request).catch(error => {
+        rejected = error instanceof AuthError;
+        throw error;
+      });
+      if (restored.status === "rejected") {
+        rejected = true;
+        throw new Error(restored.reason ?? "The ledger changed. Preview the backup again.");
+      }
       await loadRestoredSnapshot(restored, currentEpoch);
       lastError = null;
       announce("restoreEnd");
     } catch (error) {
       const state = await readLocal(requireDB());
       assertSession(state, currentEpoch);
-      await releaseRestore(currentEpoch, accepted || error instanceof NetworkError);
+      await releaseRestore(currentEpoch, !rejected);
       if (error instanceof AuthError) {
         needsSignIn = true;
         await changeLocal(requireDB(), currentEpoch, local => { local.meta.needsSignIn = true; });
@@ -697,8 +712,11 @@ export function createStore(options: StoreOptions = {}) {
       const before = await readLocal(database);
       await verifyBuyer(before, currentEpoch);
       if (before.meta.restore?.active) await releaseRestore(currentEpoch, true);
-      if (before.meta.restore?.attempted) await recoverRestore(before, currentEpoch);
+      if (before.meta.restore?.attempted && await recoverRestore(before, currentEpoch)) await refresh();
       await changeLocal(database, currentEpoch, state => {
+        if (state.meta.restore?.attempted) {
+          throw new Error("The previous restore is still unresolved. Sync to check its result before restoring again.");
+        }
         if (state.queue.length) throw new Error("Resolve and sync pending changes before restoring.");
         state.meta.restore = { request, active: true, attempted: false };
       });
