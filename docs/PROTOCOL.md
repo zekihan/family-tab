@@ -92,11 +92,11 @@ type ReceiptCode =
   | "not_setup";             // any operation other than settings create before setup
 ```
 
-Every receipt, including rejections and conflicts, is stored and returned again for a retry of the same operation ID. Only `applied` increments the revision.
+Every committed sync receipt, including rejections and conflicts, is stored and returned again for a retry of the same operation ID. Only `applied` increments the revision.
 
 ## 5. HTTP API
 
-All `/api/*` requests must carry the header `X-Family-Tab: 1`. Requests without it get `403` before any other check. JSON bodies only, `Content-Type: application/json`, request bodies capped at 8 MiB. Errors are `{"error": "<code>", "message": "..."}`.
+All `/api/*` requests must carry the header `X-Family-Tab: 1`. Requests with a missing or wrong value get `403` before any other check. The API does not enable credentialed CORS. JSON bodies only, `Content-Type: application/json`, request bodies capped at 8 MiB. Errors are `{"error": "<code>", "message": "..."}`.
 
 Unauthenticated endpoints:
 
@@ -107,13 +107,13 @@ Unauthenticated endpoints:
 | `GET /auth/callback` | Completes the flow, consumes the transaction, sets the session cookie, redirects to `/` |
 | `POST /api/logout` | Revokes the session named by the cookie if any, clears the cookie, always `204`, even when the session was already missing or expired |
 
-Authenticated endpoints (`401 {"error":"unauthenticated"}` without a valid session):
+Authenticated endpoints (without a valid session, `401` with error code `unauthenticated`):
 
 | Method and path | Request | Response |
 | --- | --- | --- |
 | `GET /api/me` | | `{ "subject": string, "name": string \| null, "email": string \| null }` |
 | `GET /api/snapshot` | | `Snapshot` |
-| `POST /api/sync/receipts` | `{ "opIds": string[] }` | `{ "generation": string, "receipts": Receipt[] }` (only IDs with a stored receipt) |
+| `POST /api/sync/receipts` | `{ "opIds": string[] }` | `{ "generation": string, "receipts": Receipt[] }` (only IDs with a stored receipt, including applied restores) |
 | `POST /api/sync/ops` | `{ "items": [{ "op": Operation, "deps": string[] }] }` | `{ "generation": string, "results": OpResult[] }` in request order |
 | `POST /api/restore` | `{ "opId": string, "expectedRevision": number, "backup": BackupFile }` | `RestoreResult` |
 
@@ -135,8 +135,10 @@ interface RestoreResult {
 }
 ```
 
-- `/api/sync/ops` processes items in order, each in its own transaction. `deps` lists operation IDs from earlier items in the same request; if any of them did not end `applied` (in this request or in a stored receipt), the item is `skipped`. A stored receipt for the operation ID is returned as is, before any other check. An operation whose `generation` differs from the current one, and has no receipt, is `held`.
-- `/api/restore` returns a stored receipt for `opId` if one exists. `revision_mismatch` and validation failures are not stored, so the buyer can preview again. Applied restores are stored in the receipts table, which a restore never clears.
+- `/api/sync/ops` processes items in order, each in its own transaction. The client lists dependencies from earlier items in the same request in `deps`. The server returns an existing receipt for the operation ID before checking dependencies. If any dependency has no `applied` receipt, the item is `skipped`. After receipt and dependency checks, a different `generation` makes the operation `held`.
+- `/api/restore` returns `400` with error code `invalid` for missing or null `expectedRevision` or `backup`, a negative revision, or a missing or empty `opId`. For a complete request it returns a stored receipt for `opId` if one exists. `revision_mismatch` and backup validation failures return a rejected result and are not stored, so the buyer can preview again. Applied restores are stored in the receipts table, which a restore never clears.
+- The client sends operations in order in batches of at most 200 items and 1 MiB per JSON body. An operation that cannot fit in a batch goes to review. The client treats a request timeout as a network failure. The timeout is 20 seconds per API request and 60 seconds for `/api/restore`. After a restore times out, sync checks for a receipt by its operation ID. Only **Retry restore** in Settings can resend it, using the same ID. **Cancel** clears the retry. If the original request commits after cancellation, sync still recovers the restored ledger and any unapplied changes from that backup.
+- The web server serves existing static files and falls back to `index.html` for app routes. Missing `/assets/*` and other file-like paths return `404`.
 - Sessions: cookie `ft_session`, `Secure` (configurable off for local HTTP dev only), `HttpOnly`, `SameSite=Lax`, path `/`. 30-day sliding expiry, renewed at most once an hour on authenticated requests.
 
 ## 6. Backup file
@@ -145,7 +147,7 @@ interface RestoreResult {
 interface BackupFile {
   format: "family-tab-backup";
   formatVersion: 1;
-  exportedAt: string;     // RFC 3339
+  exportedAt: string;     // RFC 3339 UTC
   currency: "TRY";
   timeZone: string;
   people: Person[]; purchases: Purchase[]; payments: Payment[]; refunds: Refund[]; payouts: Payout[]; // `version` optional on import
@@ -159,6 +161,10 @@ interface UnappliedOperation {
   reason: string | null;  // why it needs review
 }
 ```
+
+All six collections must be present as arrays, even when empty. Each record must have exactly the fields shown in section 2, with `version` optional on import. Nullable fields must be present. A restore sets every record version to its operation ID.
+
+An unapplied entry requires `order`, `op`, `dependencies` and `reason`. Only `reason` may be null. Order is a nonnegative safe integer. Operation IDs must be unique, and dependencies must refer to unapplied operations with lower order. Each operation needs a generation, an RFC 3339 UTC `createdAt` and the payload for its kind. Updates and deletes need a non-empty `baseVersion`. If present, `alreadyReturned` must be a boolean on a payout.
 
 ## 7. Ledger fixtures
 
@@ -237,14 +243,14 @@ Where DESIGN.md leaves a detail open, both implementations and the fixtures foll
 - **Home totals** sum every person, archived included: `leftToPay`, `dueByToday`, `dueNextMonth`, `credit`. `archivedLeftToPay` is the sum of `leftToPay` over archived people. **homeOrder** lists active people only, by Due by today descending, then Left to pay descending, then name (`localeCompare` with locale `tr`, then ID).
 - **Status chip**, first match wins: `credit` when credit > 0; `allPaid` when Left to pay is 0; `dueByToday` when Due by today > 0; `nextDate` with `earliestUnpaidFuture` when it is non-null; else `whenTheyCan`. `behindPlan` is the person's Behind plan flag on the last three kinds, and always false on the first two.
 - **Payment chips**, in this order, each only when its amount is positive: `dueByToday` = cash shortfall + Due by today; `throughNextDue` = cash shortfall + Due by today + the unpaid parts of every amount due on the earliest `dueOn` > today that is not fully paid (omitted when there is no such date); `everything` = Left to pay. `shortfallMinor` is the cash shortfall included in the chip's amount, the same value on all three. The default chip is the first one returned.
-- **PurchaseView** in the client: `leftMinor` = sum of unpaid parts of its adjusted amounts; `refundedMinor` = sum of its refunds; `earliestUnpaidDue` = earliest `dueOn` among its amounts that are not fully paid, or null.
+- **PurchaseView** in the client: `leftMinor` = sum of unpaid parts of its adjusted amounts; `refundedMinor` = sum of its refunds; `earliestUnpaidDue` = earliest `dueOn` among its amounts that are not fully paid, or null. `payableCount` counts amounts still positive after refunds. `paidCount` counts those paid in full.
 
 ### Record rules
 
 Codes: a missing reference is `not_found`, a repeated ID is `duplicate_id` (IDs are unique across all record types), refunds above the price are `refunds_exceed_total`, and every other record rule is `invalid`.
 
 - Dates must be real calendar dates in `YYYY-MM-DD` form. Settings `timeZone` must be a name that loads from the IANA database (`UTC` included); `""` and `Local` are invalid.
-- Names and items are non-empty after trimming. Notes, when non-null, are at most 500 characters; names and items at most 200.
+- Names and items are non-empty after trimming. Notes, when non-null, are at most 500 Unicode code points. Names and items are at most 200.
 - Amounts and `totalMinor` are integers from 1 through 10,000,000,000.
 - Amount input trims Unicode `White_Space` and U+FEFF from both ends before parsing. Whitespace inside the amount is invalid.
 - `boughtOn`, `paidOn`, `refundedOn` and `paidOutOn` are ≤ today. `dueDate` and `firstDue` are ≥ `boughtOn`. A refund's `refundedOn` is ≥ its purchase's `boughtOn`.

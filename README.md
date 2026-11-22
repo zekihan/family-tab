@@ -26,12 +26,14 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design and
 | `LOG_LEVEL` | `INFO` | Log level |
 | `COOKIE_INSECURE` | `false` | Drop the `Secure` cookie attribute, for local HTTP development only |
 
-The OIDC client must allow PKCE `S256` and the `query` response mode.
+The OIDC client must allow PKCE `S256` and the `query` response mode. The container image sets `DB_PATH=/data/family-tab.db` and `BACKUP_DIR=/data/backups`.
 
 ## Development
 
 ```sh
-make web    # build the frontend
-make dev    # run the server
-make test
+make web        # build the frontend
+make dev        # build the frontend and run the server
+make test       # Go, web and differential tests
+make test/diff  # compare the Go and TypeScript ledger rules
+make test/e2e   # Playwright against the built server and mock OIDC provider
 ```

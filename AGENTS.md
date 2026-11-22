@@ -15,6 +15,7 @@ Guidance for AI agents working in this repository.
 | Path | Contents |
 | --- | --- |
 | `main.go` | Entry point: config, database, auth, sync service, HTTP server, backups |
+| `cmd/ledgercalc` | Go runner for the differential test |
 | `internal/config` | Environment configuration |
 | `internal/ledger` | Pure Go balance and validation rules (no I/O) |
 | `internal/protocol` | Sync and backup wire types |
@@ -30,13 +31,15 @@ Guidance for AI agents working in this repository.
 | `web/public/sw.js` | Service worker (app shell only) |
 | `testdata/` | Shared fixtures read by both Go and TypeScript tests |
 | `web/difftest` | Differential test of the Go and TypeScript rules |
-| `e2e/` | Playwright tests against the built binary and a mock OIDC provider |
+| `e2e/` | Playwright tests and runner |
+| `e2e/mockidp` | Mock OIDC provider used by Playwright |
 
 ## Commands
 
 ```sh
 make web        # build the frontend into web/dist (embedded by the binary)
-make test       # Go tests (with -race), web tests, differential test
+make test       # Go tests (including -race), web tests, differential test
+make test/diff  # differential test only
 make lint       # golangci-lint
 make test/e2e   # Playwright
 npm --prefix web test        # web unit tests (node --test, TypeScript via type stripping)
