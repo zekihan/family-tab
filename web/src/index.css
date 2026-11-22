@@ -164,6 +164,7 @@ html:has(.sticky-header) { scroll-padding-top: calc(4.15rem + 1px + env(safe-are
 }
 .home-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; border-top: 1px solid var(--hero-line); padding-top: 0.9rem; margin-top: 0.4rem; }
 .home-figures .figure dt { color: var(--hero-muted); }
+.home-figures .figure dd { margin-top: auto; }
 .home-figures .figure + .figure { padding-left: 0.75rem; border-left: 1px solid var(--hero-line); }
 .home-grid, .section, .card-stack { display: grid; gap: 0.9rem; align-content: start; min-width: 0; }
 .home-grid { gap: 1.35rem; }

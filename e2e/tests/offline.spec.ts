@@ -1,32 +1,133 @@
+import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixtures";
 import {
   apiHeader, cash, figure, goOffline, homeHeading, money, openLedger, person, purchase, seedPerson,
   sessionCookie, settings, signIn, snapshot, synced, syncStatus,
 } from "./ledger";
 
-test.describe("online with a stalled shell request", () => {
+test.describe("online with an unavailable shell", () => {
   test.use({ proxyShell: true });
 
-  for (const path of ["/", "/sw.js"]) {
-    test(`the installed ledger reloads when ${path} stalls`, async ({ app, page }) => {
+  for (const [path, phase, name] of [
+    ["/", "headers", "the navigation headers stall"],
+    ["/sw.js", "headers", "the service worker script stalls"],
+    ["/", "body", "the navigation body stalls after 200 headers"],
+  ] as const) {
+    test(`the installed ledger opens when ${name}`, async ({ app, page }) => {
       await seedPerson(page, app.url);
       await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
-      const { started, resume } = app.stall(path);
-      const deadline = performance.now() + 8_000;
-      await page.reload({ waitUntil: "commit", timeout: 8_000 });
-      await expect(page.getByRole("heading", { name: "Mom", exact: true }))
-        .toBeVisible({ timeout: Math.max(1, deadline - performance.now()) });
-      await started;
-      expect(await page.evaluate(() => navigator.onLine)).toBe(true);
-      await figure(page, "Left to pay", 10_000);
-      resume();
-      if (path === "/") {
-        await expect.poll(() => page.evaluate(async () =>
-          (await caches.match("/index.html"))?.headers.get("X-E2E-Resumed"),
-        )).toBe("1");
+      const { started, resume } = app.stall(path, phase);
+      try {
+        const deadline = performance.now() + 8_000;
+        await page.reload({ waitUntil: "commit", timeout: 8_000 });
+        await expect(page.getByRole("heading", { name: "Mom", exact: true }))
+          .toBeVisible({ timeout: Math.max(1, deadline - performance.now()) });
+        await started;
+        expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+        await figure(page, "Left to pay", 10_000);
+      } finally {
+        resume();
       }
     });
   }
+
+  for (const [status, name] of [[502, "a 502 response"], [200, "an HTML shell from another build"]] as const) {
+    test(`the installed ledger opens despite ${name}`, async ({ app, page }) => {
+      await seedPerson(page, app.url);
+      await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+      app.respond("/", response => {
+        response.writeHead(status, { "Content-Type": "text/html" });
+        response.end('<!doctype html><meta name="family-tab-build" content="different-build"><title>Other shell</title>');
+      });
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "Mom", exact: true })).toBeVisible();
+      await figure(page, "Left to pay", 10_000);
+    });
+  }
+
+  test("a controlled navigation can still redirect to sign-in", async ({ app, page }) => {
+    await seedPerson(page, app.url);
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+    let redirected = false;
+    app.respond("/", response => {
+      if (redirected) return;
+      redirected = true;
+      response.writeHead(302, { Location: "/auth/login", "Cache-Control": "no-store" });
+      response.end();
+    });
+    const login = page.waitForResponse(response => new URL(response.url()).pathname === "/auth/login");
+    await page.reload();
+    expect((await login).status()).toBe(303);
+    await expect(page.getByRole("heading", { name: "Mom", exact: true })).toBeVisible();
+  });
+
+  test("navigation and service worker discovery share one startup window", async ({ app, page }) => {
+    await seedPerson(page, app.url);
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+    const navigation = app.stall("/");
+    const script = app.stall("/sw.js");
+    try {
+      const deadline = performance.now() + 7_000;
+      await page.reload({ waitUntil: "commit", timeout: 7_000 });
+      await expect(page.getByRole("heading", { name: "Mom", exact: true }))
+        .toBeVisible({ timeout: Math.max(1, deadline - performance.now()) });
+      await Promise.all([navigation.started, script.started]);
+      await figure(page, "Left to pay", 10_000);
+    } finally {
+      navigation.resume();
+      script.resume();
+    }
+  });
+
+  test("a stalled shell install leaves a draft open and activates the update on the next startup", async ({ app, page }) => {
+    await seedPerson(page, app.url);
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+    const build = page.locator('meta[name="family-tab-build"]');
+    const originalBuild = (await build.getAttribute("content"))!;
+    const nextBuild = "next-e2e-build";
+    const [script, html] = await Promise.all(["sw.js", "index.html"].map(path =>
+      readFile(new URL(`../../web/dist/${path}`, import.meta.url), "utf8"),
+    ));
+    const precacheStarted = Promise.withResolvers<void>();
+    const releasePrecache = Promise.withResolvers<void>();
+    app.respond("/sw.js", response => {
+      response.writeHead(200, { "Content-Type": "text/javascript" });
+      response.end(script.replace(originalBuild, nextBuild));
+    });
+    app.respond("/index.html", async response => {
+      precacheStarted.resolve();
+      await releasePrecache.promise;
+      response.writeHead(200, { "Content-Type": "text/html" });
+      response.end(html.replace(originalBuild, nextBuild));
+    });
+    try {
+      await page.reload({ waitUntil: "commit" });
+      await precacheStarted.promise;
+      await expect(page.getByRole("heading", { name: "Mom", exact: true })).toBeVisible();
+      await expect(build).toHaveAttribute("content", originalBuild);
+      await page.getByRole("button", { name: "Record a payment" }).click();
+      const note = page.getByRole("dialog").getByLabel("Note (optional)");
+      await note.fill("Unfinished payment");
+
+      releasePrecache.resolve();
+      await expect.poll(() => page.evaluate(async () =>
+        (await navigator.serviceWorker.getRegistration())?.waiting?.state,
+      )).toBe("installed");
+      await expect(note).toHaveValue("Unfinished payment");
+
+      app.respond("/", response => {
+        response.writeHead(200, { "Content-Type": "text/html" });
+        response.end(html.replace(originalBuild, nextBuild).replace("<html", '<html data-network-shell="true"'));
+      });
+      await page.reload({ waitUntil: "commit" });
+      await expect(build).toHaveAttribute("content", nextBuild);
+      await expect(page.locator("html")).toHaveAttribute("data-network-shell", "true");
+      await expect(page.getByRole("heading", { name: "Mom", exact: true })).toBeVisible();
+      await figure(page, "Left to pay", 10_000);
+    } finally {
+      releasePrecache.resolve();
+    }
+  });
 });
 
 test("the cached ledger reloads offline and saved changes reach a fresh device after reconnect", async ({

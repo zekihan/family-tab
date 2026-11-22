@@ -6,7 +6,9 @@ import { deferred } from "./helpers.ts";
 
 function browser(t: TestContext) {
   const original = {};
-  const registration = { update: async () => {}, installing: null as EventTarget | null, waiting: null };
+  const registration = Object.assign(new EventTarget(), {
+    update: async () => {}, installing: null as EventTarget | null, waiting: null as EventTarget | null,
+  });
   const serviceWorker = Object.assign(new EventTarget(), {
     controller: original, register: async () => registration, getRegistration: async () => registration,
   });
@@ -28,6 +30,8 @@ function browser(t: TestContext) {
   return { serviceWorker, registration, activate, reload };
 }
 
+const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+
 test("online startup waits through a slow service worker check and installation", async t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { registration, activate, reload } = browser(t);
@@ -38,27 +42,25 @@ test("online startup waits through a slow service worker check and installation"
     return checked.promise;
   };
   let finished = false;
-  const startup = ensureLatestApp().then(result => {
+  const startup = ensureLatestApp(5000).then(result => {
     finished = true;
     return result;
   });
   await entered.promise;
-  // The network check can be slow within its budget. A detected installation
-  // must still finish even after that budget expires.
-  t.mock.timers.tick(4500);
-  await new Promise<void>(resolve => setImmediate(resolve));
+  t.mock.timers.tick(3500);
+  await flush();
   assert.equal(finished, false);
   const worker = Object.assign(new EventTarget(), { state: "installing", postMessage: t.mock.fn() });
   registration.installing = worker;
   checked.resolve();
-  await new Promise<void>(resolve => setImmediate(resolve));
-  t.mock.timers.tick(1000);
-  await new Promise<void>(resolve => setImmediate(resolve));
+  await flush();
+  t.mock.timers.tick(500);
+  await flush();
   assert.equal(finished, false);
   assert.equal(worker.postMessage.mock.callCount(), 0);
   worker.state = "installed";
   worker.dispatchEvent(new Event("statechange"));
-  await new Promise<void>(resolve => setImmediate(resolve));
+  await flush();
   assert.deepEqual(worker.postMessage.mock.calls[0]?.arguments, [{ type: "activate" }]);
   assert.equal(finished, false);
   activate();
@@ -67,7 +69,7 @@ test("online startup waits through a slow service worker check and installation"
 });
 
 for (const stalled of ["register", "update"] as const) {
-  test(`startup times out a stalled ${stalled} and reloads on a later controller change`, async t => {
+  test(`startup times out a stalled ${stalled} without reloading on a later controller change`, async t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { serviceWorker, registration, activate, reload } = browser(t);
     const entered = deferred<void>();
@@ -81,19 +83,19 @@ for (const stalled of ["register", "update"] as const) {
     const startup = ensureLatestApp(50).then(finished);
     await entered.promise;
     t.mock.timers.tick(49);
-    await new Promise<void>(resolve => setImmediate(resolve));
+    await flush();
     assert.equal(finished.mock.callCount(), 0);
     t.mock.timers.tick(1);
-    await new Promise<void>(resolve => setImmediate(resolve));
+    await flush();
     assert.deepEqual(finished.mock.calls.map(call => call.arguments), [[false]]);
     await startup;
     activate();
     activate();
-    assert.equal(reload.mock.callCount(), 1);
+    assert.equal(reload.mock.callCount(), 0);
   });
 }
 
-test("startup waits for a visible installation even when update stalls", async t => {
+test("startup follows a visible installation while the update check is pending", async t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { registration, activate } = browser(t);
   const entered = deferred<void>();
@@ -106,25 +108,102 @@ test("startup waits for a visible installation even when update stalls", async t
   await entered.promise;
   const worker = Object.assign(new EventTarget(), { state: "installing", postMessage: t.mock.fn() });
   registration.installing = worker;
-  t.mock.timers.tick(50);
-  await new Promise<void>(resolve => setImmediate(resolve));
+  registration.dispatchEvent(new Event("updatefound"));
+  t.mock.timers.tick(25);
+  await flush();
   assert.equal(finished.mock.callCount(), 0);
   worker.state = "installed";
+  registration.installing = null;
+  registration.waiting = worker;
   worker.dispatchEvent(new Event("statechange"));
-  await new Promise<void>(resolve => setImmediate(resolve));
+  await flush();
   assert.deepEqual(worker.postMessage.mock.calls.map(call => call.arguments), [[{ type: "activate" }]]);
   activate();
   await startup;
   assert.deepEqual(finished.mock.calls.map(call => call.arguments), [[true]]);
 });
 
-test("a failed update check still reloads on a later controller change", async t => {
+test("a stalled installation opens the ledger and leaves the finished worker waiting", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { registration, activate, reload } = browser(t);
+  const worker = Object.assign(new EventTarget(), { state: "installing", postMessage: t.mock.fn() });
+  registration.installing = worker;
+  const finished = t.mock.fn();
+  const startup = ensureLatestApp(50).then(finished);
+  await flush();
+  assert.equal(finished.mock.callCount(), 0);
+  t.mock.timers.tick(50);
+  await flush();
+  assert.deepEqual(finished.mock.calls.map(call => call.arguments), [[false]]);
+  await startup;
+
+  worker.state = "installed";
+  registration.installing = null;
+  registration.waiting = worker;
+  worker.dispatchEvent(new Event("statechange"));
+  await flush();
+  assert.equal(worker.postMessage.mock.callCount(), 0);
+  assert.equal(reload.mock.callCount(), 0);
+
+  const nextStartup = ensureLatestApp(50);
+  await flush();
+  assert.deepEqual(worker.postMessage.mock.calls.map(call => call.arguments), [[{ type: "activate" }]]);
+  activate();
+  assert.equal(await nextStartup, true);
+  assert.equal(reload.mock.callCount(), 1);
+});
+
+test("an update discovered after the startup deadline stays waiting", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { registration, reload } = browser(t);
+  const checked = deferred<void>();
+  registration.update = () => checked.promise;
+  const startup = ensureLatestApp(50);
+  await flush();
+  t.mock.timers.tick(50);
+  assert.equal(await startup, false);
+
+  const worker = Object.assign(new EventTarget(), { state: "installed", postMessage: t.mock.fn() });
+  registration.waiting = worker;
+  registration.dispatchEvent(new Event("updatefound"));
+  checked.resolve();
+  await flush();
+  assert.equal(worker.postMessage.mock.callCount(), 0);
+  assert.equal(reload.mock.callCount(), 0);
+});
+
+test("activation requested during startup cannot reload after the deadline", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { registration, activate, reload } = browser(t);
+  const worker = Object.assign(new EventTarget(), { state: "installed", postMessage: t.mock.fn() });
+  registration.waiting = worker;
+  const finished = t.mock.fn();
+  const startup = ensureLatestApp(50).then(finished);
+  await flush();
+  assert.equal(worker.postMessage.mock.callCount(), 1);
+  t.mock.timers.tick(50);
+  await flush();
+  assert.deepEqual(finished.mock.calls.map(call => call.arguments), [[false]]);
+  await startup;
+  activate();
+  assert.equal(reload.mock.callCount(), 0);
+});
+
+test("a failed update check cannot reload after the ledger opens", async t => {
   const { registration, activate, reload } = browser(t);
   registration.update = async () => { throw new TypeError("Offline"); };
   assert.equal(await ensureLatestApp(), false);
   assert.equal(reload.mock.callCount(), 0);
   activate();
-  assert.equal(reload.mock.callCount(), 1);
-  activate();
+  assert.equal(reload.mock.callCount(), 0);
+});
+
+test("startup can reload for a controller change before a failed check settles", async t => {
+  const { registration, activate, reload } = browser(t);
+  registration.update = async () => {
+    activate();
+    throw new TypeError("Offline");
+  };
+  assert.equal(await ensureLatestApp(), true);
   assert.equal(reload.mock.callCount(), 1);
 });

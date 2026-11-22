@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { loginURL } from "../data/index.ts";
+import type { StoreSnapshot } from "../data/index.ts";
 import type { PurchaseView } from "../ledger/index.ts";
 import { formatTRY } from "../ledger/index.ts";
 import type { LedgerRecord, Operation, Payment, Payout, Person, Purchase, RecordType, Refund } from "../types.ts";
@@ -244,9 +245,16 @@ export function PersonPage({ id, open }: { id: string; open: (action: EntryActio
   </>;
 }
 
-function deletedRecordLabel({ recordType, preImage }: Extract<Operation, { kind: "delete" }>) {
+function deletedRecordLabel({ recordType, preImage }: Extract<Operation, { kind: "delete" }>, snapshot: StoreSnapshot) {
   const type = recordLabels[recordType];
   const label = type[0].toUpperCase() + type.slice(1);
+  if (recordType === "refund" && preImage && "purchaseId" in preImage) {
+    const purchaseId = preImage.purchaseId;
+    const purchase = snapshot.records.purchases.find(row => row.id === purchaseId);
+    const removed = snapshot.pendingUndo.find(({ op }) => op.kind === "delete" && op.recordType === "purchase" && op.recordId === purchaseId)?.op;
+    const item = purchase?.item ?? (removed?.kind === "delete" ? recordName(removed.preImage) : null);
+    if (item) return `${label} for ${item}`;
+  }
   const name = recordName(preImage);
   if (!name) return label;
   return preImage && "amountMinor" in preImage ? `${label} of ${name}` : `${label} ${name}`;
@@ -256,7 +264,7 @@ export function UndoToasts() {
   const { snapshot, store, notify } = useLedgerUI();
   return <div className="toasts" aria-live="polite" aria-relevant="additions">
     {snapshot.pendingUndo.map(({ op }) => op.kind === "delete" && <div className="toast" key={op.id}>
-      <p>{deletedRecordLabel(op)} deleted</p>
+      <p>{deletedRecordLabel(op, snapshot)} deleted</p>
       <button className="button small" disabled={snapshot.sync.restoreInProgress} onClick={() => {
         void store.undo(op.id).then(restored => notify(restored ? "Deletion undone." : "The undo window has ended."))
           .catch(error => notify(error instanceof Error ? error.message : String(error)));

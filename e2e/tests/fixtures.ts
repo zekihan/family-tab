@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer as createHTTPServer, request } from "node:http";
+import type { ServerResponse } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,8 @@ const buyer = "family-tab-buyer";
 type Provider = { Issuer: string; ClientID: string; ClientSecret: string };
 type App = {
   url: string; buyer: string; issuer: string;
-  stall: (path: string) => { started: Promise<void>; resume: () => void };
+  stall: (path: string, phase?: "headers" | "body") => { started: Promise<void>; resume: () => void };
+  respond: (path: string, handler: (response: ServerResponse) => void | Promise<void>) => void;
 };
 type Device = { context: BrowserContext; page: Page };
 
@@ -78,17 +80,16 @@ export const test = base.extend<{
 
   app: async ({ provider, proxyShell }, use) => {
     const port = await availablePort();
-    const stalled = new Map<string, () => Promise<void>>();
+    const overrides = new Map<string, (response: ServerResponse) => void | Promise<void>>();
     // Page routing cannot hold the service worker's own fetch or update traffic.
     const proxy = proxyShell ? createHTTPServer(async (incoming, outgoing) => {
       const path = new URL(incoming.url!, "http://localhost").pathname;
-      const hold = stalled.get(path);
-      if (hold) await hold();
+      await overrides.get(path)?.(outgoing);
+      if (outgoing.writableEnded || outgoing.headersSent) return;
       if (outgoing.destroyed) return;
       const upstream = request({
         hostname: "127.0.0.1", port, path: incoming.url, method: incoming.method, headers: incoming.headers,
       }, response => {
-        if (hold) outgoing.setHeader("X-E2E-Resumed", "1");
         outgoing.writeHead(response.statusCode!, response.headers);
         response.pipe(outgoing);
       });
@@ -124,15 +125,24 @@ export const test = base.extend<{
       }).toBe(200);
       await use({
         url, buyer, issuer: provider.Issuer,
-        stall(path) {
+        stall(path, phase = "headers") {
           if (!proxy) throw new Error("Stalling requests requires the loopback proxy.");
           let resume!: () => void;
           const held = new Promise<void>(resolve => { resume = resolve; });
-          const started = new Promise<void>(resolve => stalled.set(path, () => {
+          const started = new Promise<void>(resolve => overrides.set(path, async response => {
+            if (phase === "body") {
+              response.writeHead(200, { "Content-Type": "text/html" });
+              response.flushHeaders();
+            }
             resolve();
-            return held;
+            await held;
+            if (phase === "body") response.end("<!doctype html><title>Stalled shell</title>");
           }));
-          return { started, resume: () => { stalled.delete(path); resume(); } };
+          return { started, resume: () => { overrides.delete(path); resume(); } };
+        },
+        respond(path, handler) {
+          if (!proxy) throw new Error("Overriding responses requires the loopback proxy.");
+          overrides.set(path, handler);
         },
       });
     } finally {

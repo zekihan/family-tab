@@ -234,6 +234,45 @@ test("payment quick amounts show the selection until the amount is typed", async
   await expect(all).toHaveAttribute("aria-pressed", "false");
 });
 
+test("a purchase synced from another tab clears the stale payment shortcut without changing the amount", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  const other = await page.context().newPage();
+  await other.goto(app.url);
+  await person(other);
+  await page.bringToFront();
+  await page.getByRole("button", { name: "Record a payment", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Record a payment" });
+  const all = dialog.getByRole("button", { name: /^Everything/ });
+  const amount = dialog.getByLabel("Amount", { exact: true });
+  await all.click();
+  await expect(all).toHaveAttribute("aria-pressed", "true");
+  await expect(amount).toHaveValue("100");
+
+  await purchase(other, { item: "Electric kettle", price: "200" });
+  await synced(other);
+  await expect(all).toHaveText("Everything 300 TL");
+  await expect(all).toHaveAttribute("aria-pressed", "false");
+  await expect(amount).toHaveValue("100");
+  await save(dialog);
+  await synced(page);
+  expect((await snapshot(page)).payments.map(payment => payment.amountMinor)).toEqual([10_000]);
+});
+
+test("Home due amounts share a baseline at 390 pixels in both color schemes", async ({ app, page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page, app.url);
+  const figures = page.locator(".home-figures");
+  await expect(figures).toBeVisible();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    const [today, nextMonth] = await figures.locator("dd").evaluateAll(values =>
+      values.map(value => value.getBoundingClientRect().bottom),
+    );
+    expect(nextMonth).toBeCloseTo(today, 0);
+  }
+});
+
 test("Undo toasts identify the deleted record", async ({ app, page }) => {
   await seedPerson(page, app.url);
   await purchase(page, { item: "Robot vacuum", price: "200" });
@@ -251,7 +290,7 @@ test("Undo toasts identify the deleted record", async ({ app, page }) => {
   for (const [button, description] of [
     [`Delete payment of ${money(60_000)}`, `Payment of ${money(60_000)}`],
     [`Delete cash return of ${money(20_000)}`, `Cash return of ${money(20_000)}`],
-    ["Delete shop refund for Robot vacuum", `Shop refund of ${money(15_000)}`],
+    ["Delete shop refund for Robot vacuum", "Shop refund for Robot vacuum"],
     ["Delete Kitchen towels", "Purchase Kitchen towels"],
   ]) {
     await page.getByRole("button", { name: button, exact: true }).click();
@@ -259,6 +298,13 @@ test("Undo toasts identify the deleted record", async ({ app, page }) => {
     await toast.getByRole("button", { name: "Undo" }).click();
     await expect(toast).toBeHidden();
   }
+  await page.getByRole("button", { name: "Delete shop refund for Robot vacuum", exact: true }).click();
+  await page.getByRole("button", { name: "Delete Robot vacuum", exact: true }).click();
+  const refundToast = toast.filter({ hasText: "Shop refund for Robot vacuum deleted" });
+  await expect(refundToast).toBeVisible();
+  await refundToast.getByRole("button", { name: "Undo" }).click();
+  await expect(vacuum).toBeVisible();
+
   await page.getByRole("link", { name: "‹ Home", exact: true }).click();
   await person(page, "Dad");
   await page.getByRole("button", { name: "Delete Socks", exact: true }).click();

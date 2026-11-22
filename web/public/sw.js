@@ -6,10 +6,24 @@ const CACHE = PREFIX + BUILD_ID;
 const SHELL = ["/index.html", "/manifest.webmanifest", "/icon.svg", ...ASSETS];
 const NAVIGATION_TIMEOUT_MS = 3000;
 
+async function isMatchingShell(response) {
+  return response.ok && response.status !== 206 && !response.redirected &&
+    /^text\/html(?:\s*;|$)/i.test(response.headers.get("Content-Type") ?? "") &&
+    (await response.clone().text()).includes(`<meta name="family-tab-build" content="${BUILD_ID}">`);
+}
+
+async function installShell() {
+  const request = path => new Request(path, { cache: "reload", credentials: "omit" });
+  const [index, ...assets] = SHELL;
+  const response = await fetch(request(index));
+  if (!await isMatchingShell(response)) throw new Error("The app shell does not match the service worker.");
+  const cache = await caches.open(CACHE);
+  await cache.addAll(assets.map(request));
+  await cache.put(index, response);
+}
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path =>
-    new Request(path, { cache: "reload", credentials: "omit" }),
-  ))));
+  event.waitUntil(installShell());
 });
 
 self.addEventListener("message", (event) => {
@@ -32,25 +46,20 @@ self.addEventListener("fetch", (event) => {
       /^\/(?:api|auth)(?:\/|$)/.test(url.pathname)) return;
 
   if (request.mode === "navigate") {
-    const cache = caches.open(CACHE);
-    const network = fetch(request).catch(() => null);
-    event.waitUntil(network.then(async response => {
-      if (!response?.ok || response.redirected || !response.headers.get("Content-Type")?.startsWith("text/html")) return;
-      const copy = response.clone();
-      // Keep this cache usable offline with the assets installed by this worker.
-      if ((await response.clone().text()).includes(`<meta name="family-tab-build" content="${BUILD_ID}">`)) {
-        await (await cache).put("/index.html", copy);
-      } else {
-        void copy.body?.cancel();
-      }
-    }).catch(() => undefined));
+    const controller = new AbortController();
+    const network = fetch(request, { signal: controller.signal }).then(async response => {
+      if (response.type === "opaqueredirect" || await isMatchingShell(response)) return response;
+      return null;
+    }).catch(() => null);
     let timer;
     const deadline = new Promise(resolve => {
       timer = setTimeout(() => resolve(null), NAVIGATION_TIMEOUT_MS);
     });
     event.respondWith(Promise.race([network, deadline]).then(async response => {
       clearTimeout(timer);
-      return response ?? (await (await cache).match("/index.html")) ?? Response.error();
+      if (response) return response;
+      controller.abort();
+      return (await caches.match("/index.html", { cacheName: CACHE })) ?? Response.error();
     }));
   } else if (SHELL.includes(url.pathname)) {
     event.respondWith(caches.open(CACHE).then(async cache =>

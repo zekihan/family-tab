@@ -256,6 +256,9 @@ export function CashForm(target: CashTarget) {
   const save = useFormSave(target);
   const { token } = save;
   const amountValue = parseAmount(amount);
+  if (selectedChip !== null && !chips.some(chip =>
+    chip.kind === selectedChip && amountValue.ok && chip.amountMinor === amountValue.minor,
+  )) setSelectedChip(null);
   const undoBlocked = target.type === "payout" && !initial && !store.canRecordCashReturned(personId);
   const editedPayoutId = target.type === "payout" ? initial?.id : undefined;
   const credit = useMemo(() => {
