@@ -128,3 +128,24 @@ test("an impossible date stays visible and blocks Save after leaving the field",
   await expect(dialog).toBeVisible();
   expect((await snapshot(page)).payments).toHaveLength(0);
 });
+
+test("an invalid purchase date in the collapsed section is revealed when Save is blocked", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  await page.getByRole("button", { name: "Add purchase", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add purchase" });
+  await dialog.getByLabel("What").fill("Lamp");
+  await dialog.getByLabel("Total price").fill("50");
+  const details = dialog.locator("details.optional-fields");
+  await details.locator("summary").click();
+  const date = dialog.getByLabel("Purchase date", { exact: true });
+  await date.click();
+  await date.press("ControlOrMeta+a");
+  await date.pressSequentially("31.02.2026");
+  await details.locator("summary").click();
+  await expect(date).toBeHidden();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(date).toBeVisible();
+  await expect(date).toBeFocused();
+  await expect(dialog.getByText("Enter the date as day.month.year.")).toBeVisible();
+  await expect(dialog).toBeVisible();
+});

@@ -85,7 +85,19 @@ export function SaveForm({ children, onSave, busy, error, stale, onReapply, labe
     event.preventDefault();
     if (!stale && !snapshot.sync.restoreInProgress && !blocked && !busy) onSave();
   }
-  return <form className="sheet-form" onSubmit={submit}>
+  // Browsers cannot focus an invalid field inside a collapsed <details>, so
+  // they block Save without showing why. Open the section and show the field.
+  function revealInvalid(event: FormEvent) {
+    const field = event.target as HTMLElement;
+    const section = field.closest("details");
+    if (!section || section.open) return;
+    section.open = true;
+    requestAnimationFrame(() => {
+      field.focus();
+      (field as HTMLInputElement).reportValidity?.();
+    });
+  }
+  return <form className="sheet-form" onSubmit={submit} onInvalidCapture={revealInvalid}>
     <div className="form-fields">{children}
       {stale && <div role="alert" className="notice">
         <p>{stale.current ? "This record changed while you were editing. Review the current version before reapplying your changes." : "This record was removed while you were editing."}</p>
