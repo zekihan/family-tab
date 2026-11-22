@@ -141,8 +141,10 @@ html:has(.sticky-header) { scroll-padding-top: calc(4.15rem + 1px + env(safe-are
   border-radius: 0.8rem;
   box-shadow: var(--shadow);
 }
-.menu nav a { display: flex; padding: 0.6rem 0.75rem; border-radius: 0.5rem; }
-.menu nav a:hover { background: var(--surface-2); }
+.menu nav :is(a, button) { display: block; width: 100%; padding: 0.6rem 0.75rem; border-radius: 0.5rem; text-align: start; }
+.menu nav :is(a, button:enabled):hover { background: var(--surface-2); }
+.menu nav button:enabled { cursor: pointer; }
+.menu nav .hint { padding-inline: 0.75rem; }
 .hero {
   display: grid;
   gap: 0.75rem;
@@ -339,7 +341,7 @@ input::file-selector-button { margin-right: 0.5rem; color: var(--accent); font-w
 .segmented { padding: 0.24rem; background: var(--surface-2); border-radius: 0.8rem; }
 .segmented .choice { flex: 1; border-color: transparent; background: transparent; }
 .segmented .choice[aria-pressed="true"] { background: var(--surface); border-color: var(--paid); }
-.inline-fields { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0.55rem; }
+.inline-fields { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; gap: 0.55rem; }
 .check { display: flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; }
 .check input { accent-color: var(--accent); width: 1.2rem; height: 1.2rem; }
 .optional-fields { border-top: 1px solid var(--line); }

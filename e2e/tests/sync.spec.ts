@@ -92,6 +92,72 @@ test("selecting installments uses the payday synced while the draft was on all a
   });
 });
 
+test("reselecting installments uses the synced payday and keeps a buyer-set first due date", async ({ app, page, context }) => {
+  const now = "2025-02-15T12:00:00Z";
+  await page.clock.setFixedTime(now);
+  await setup(page, app.url);
+  await purchase(page, { item: "Towels", price: "100", newPerson: "Mom", payday: "30" });
+  await person(page);
+  await synced(page);
+
+  const other = await context.newPage();
+  await other.clock.setFixedTime(now);
+  await other.goto(page.url());
+  await other.getByRole("button", { name: "Edit person" }).click();
+  const editor = other.getByRole("dialog", { name: "Edit person" });
+
+  await page.getByRole("button", { name: "Add purchase", exact: true }).click();
+  const draft = page.getByRole("dialog", { name: "Add purchase" });
+  await draft.getByLabel("What").fill("Vacuum");
+  await draft.getByLabel("Total price").fill("600");
+  const installments = draft.getByRole("button", { name: "In installments" });
+  const once = draft.getByRole("button", { name: "All at once" });
+  const firstDue = draft.getByLabel("First due date", { exact: true });
+  await installments.click();
+  await expect(firstDue).toHaveValue("28.02.2025");
+  await once.click();
+
+  await editor.getByLabel("Name", { exact: true }).fill("Mom updated");
+  await editor.getByLabel("Payday (optional)").fill("18");
+  await save(editor);
+  await synced(other);
+  await expect(draft.getByRole("button", { name: "Mom updated" })).toBeVisible();
+
+  await installments.click();
+  await expect(firstDue).toHaveValue("18.02.2025");
+  await expect(draft.getByText(/18 Jul 2025/)).toBeVisible();
+  await firstDue.fill("2025-03-10");
+  await once.click();
+  await installments.click();
+  await expect(firstDue).toHaveValue("10.03.2025");
+  await save(draft);
+  await synced(page);
+  expect((await snapshot(page)).purchases.find(row => row.item === "Vacuum")).toMatchObject({
+    firstDue: "2025-03-10", dueDay: 10,
+  });
+});
+
+test("Sync now in the Home menu pulls a purchase from another device", async ({ app, page, newDevice }) => {
+  await page.clock.install();
+  await setup(page, app.url);
+  await page.clock.pauseAt(new Date(Date.now() + 1_000));
+  const other = await newDevice();
+  await openLedger(other.page, app.url);
+  await purchase(other.page, { item: "Towels", price: "100", newPerson: "Mom" });
+  await synced(other.page);
+
+  await expect(syncStatus(page)).toBeHidden();
+  await expect(homeHeading(page)).toContainText(money(0));
+  await page.locator("summary").filter({ hasText: "Menu" }).click();
+  const menu = page.getByRole("navigation", { name: "Main menu" });
+  await menu.getByRole("button", { name: "Sync now", exact: true }).click({ timeout: 2_000 });
+  await expect(menu.getByRole("status")).toHaveText("Synced just now");
+  await expect(homeHeading(page)).toContainText(money(10_000));
+  await page.locator("summary").filter({ hasText: "Menu" }).click();
+  await person(page);
+  await expect(page.getByRole("heading", { name: "Towels" })).toBeVisible();
+});
+
 test("setup and settings save time zones with IANA casing", async ({ app, page }) => {
   await setup(page, app.url, "europe/istanbul");
   expect((await snapshot(page)).settings?.timeZone).toBe("Europe/Istanbul");

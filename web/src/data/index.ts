@@ -423,12 +423,13 @@ export function createStore(options: StoreOptions = {}) {
     return running;
   }
 
-  function onVisibility() {
+  async function onVisibility() {
     ++publication;
     masked = true;
     publish(emptySnapshot());
     if (document.visibilityState === "visible") {
       masked = false;
+      await refresh();
       void syncNow();
     }
   }

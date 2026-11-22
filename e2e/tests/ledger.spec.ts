@@ -111,6 +111,38 @@ test("devices on different calendar dates agree on the ledger's midnight boundar
   }
 });
 
+for (const invalidPayday of ["40", "1.5"]) {
+  test(`a new-person payday of ${invalidPayday} shows a field error and uses the unset installment default`, async ({ app, page }) => {
+    await page.clock.setFixedTime("2025-02-15T12:00:00Z");
+    await setup(page, app.url);
+    await page.getByRole("button", { name: "+ Add purchase", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Add purchase" });
+    await dialog.getByRole("button", { name: "+ New person", exact: true }).click();
+    await dialog.getByLabel("Name", { exact: true }).fill("Mom");
+    await dialog.getByLabel("What", { exact: true }).fill("Towels");
+    await dialog.getByLabel("Total price").fill("100");
+    const payday = dialog.getByLabel("Payday (optional)");
+    await payday.fill(invalidPayday);
+    await dialog.getByRole("button", { name: "In installments" }).click();
+    await expect(payday).toHaveAccessibleDescription("Enter a whole number from 1 to 31.", { timeout: 2_000 });
+    await expect(dialog.getByRole("alert").filter({ hasText: "Enter a whole number from 1 to 31." })).toBeVisible();
+    await expect(dialog.getByText("Choose a valid first date", { exact: false })).toBeHidden();
+    const firstDue = dialog.getByLabel("First due date", { exact: true });
+    await expect(firstDue).toHaveValue("15.03.2025");
+    await expect(dialog.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    await dialog.getByRole("button", { name: "All at once" }).click();
+    await expect(dialog.getByRole("button", { name: "Their payday" })).toBeHidden();
+
+    await payday.fill("20");
+    await expect(payday).toHaveAttribute("aria-invalid", "false");
+    await dialog.getByRole("button", { name: "In installments" }).click();
+    await expect(firstDue).toHaveValue("20.02.2025");
+    await save(dialog);
+    await synced(page);
+    expect((await snapshot(page)).people).toMatchObject([{ name: "Mom", payday: 20 }]);
+  });
+}
+
 test("an impossible date stays visible and blocks Save after leaving the field", async ({ app, page }) => {
   await seedPerson(page, app.url);
   await page.getByRole("button", { name: "Record a payment", exact: true }).click();

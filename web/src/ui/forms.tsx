@@ -51,6 +51,11 @@ const dueLabels = {
 };
 type DueChoice = keyof typeof dueLabels;
 
+function parsePayday(value: string) {
+  const day = Number(value);
+  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
+}
+
 export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...target }: DatedFormTarget<"purchase"> & {
   personId?: string;
   commitWithNewPerson?: (fields: Fields<"purchase">, person: Fields<"person">, recreateGeneration?: string) => Promise<SaveResult>;
@@ -69,6 +74,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const [newPerson, setNewPerson] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPayday, setNewPayday] = useState("");
+  const paydayId = useId();
   const [item, setItem] = useState(initial?.item ?? "");
   const [amount, setAmount] = useState(initial ? formatAmountInput(initial.totalMinor) : "");
   const [plan, setPlan] = useState<Plan>(initial?.plan ?? "once");
@@ -87,7 +93,8 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const save = useRecordForm("purchase", target);
   const newNameInput = useRef<HTMLInputElement>(null);
 
-  const newPersonPayday = Number(newPayday) || null;
+  const newPersonPayday = parsePayday(newPayday);
+  const invalidPayday = newPerson && newPayday !== "" && newPersonPayday === null;
   const payday = newPerson ? newPersonPayday : personPayday;
   const shortcuts = dueShortcuts(today, payday);
   const defaultStart = installmentDefault ?? defaultInstallmentStart(today, payday);
@@ -158,7 +165,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
     });
   }
 
-  return <SaveForm {...save} onSave={savePurchase} blocked={date.invalid || invalidPlan} label={target.commit ? "Resubmit" : "Save"}>
+  return <SaveForm {...save} onSave={savePurchase} blocked={invalidPayday || date.invalid || invalidPlan} label={target.commit ? "Resubmit" : "Save"}>
     <fieldset ref={whoField} aria-describedby={whoMissing ? whoErrorId : undefined}><legend>Who</legend>
       <div className="choices">
         {eligible.map(row => <Chip key={row.id} selected={!newPerson && who === row.id} onClick={() => selectPerson(row.id)}>
@@ -175,17 +182,25 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
     </fieldset>
     {newPerson && <div className="inline-fields">
       <label className="field">Name<input ref={newNameInput} required value={newName} onChange={event => setNewName(event.target.value)} /></label>
-      <label className="field">Payday (optional)<input type="number" min="1" max="31" step="1" value={newPayday} onChange={event => {
-        const value = event.target.value;
-        setNewPayday(value);
-        changePersonDates(Number(value) || null);
-      }} /></label>
+      <div className="field"><label htmlFor={paydayId}>Payday (optional)</label>
+        <input id={paydayId} type="number" min="1" max="31" step="1" value={newPayday}
+          aria-invalid={invalidPayday} aria-describedby={invalidPayday ? `${paydayId}-error` : undefined}
+          onChange={event => {
+            const value = event.target.value;
+            setNewPayday(value);
+            changePersonDates(parsePayday(value));
+          }} />
+        {invalidPayday && <p id={`${paydayId}-error`} className="error-text" role="alert">Enter a whole number from 1 to 31.</p>}
+      </div>
     </div>}
     <label className="field">What<input required value={item} placeholder="e.g. Vacuum cleaner" onChange={event => setItem(event.target.value)} /></label>
     <AmountField label="Total price" value={amount} onChange={setAmount} />
     <fieldset><legend>How they pay back</legend>
       <div className="segmented">
-        <Chip selected={plan === "once"} onClick={() => setPlan("once")}>All at once</Chip>
+        <Chip selected={plan === "once"} onClick={() => {
+          setInstallmentDefault(null);
+          setPlan("once");
+        }}>All at once</Chip>
         <Chip selected={plan === "installments"} onClick={() => {
           if (installmentDefault === null) setInstallmentDefault(defaultStart);
           setPlan("installments");
@@ -214,7 +229,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
             <strong>{previewText}</strong> · <button type="button" aria-label={`Change first installment date, ${displayDate(preview.first)}`}
               onClick={() => firstDueField.current?.openPicker()}>{displayDate(preview.first)}</button> – {displayDate(preview.last)}
           </p>}
-          {invalidPlan && <p className="error-text">Choose a valid first date and 2 to 120 installments of at least one kuruş each.</p>}
+          {invalidPlan && !invalidPayday && <p className="error-text">Choose a valid first date and 2 to 120 installments of at least one kuruş each.</p>}
         </div>
       </fieldset>
       {other && <label className="field">Number of installments

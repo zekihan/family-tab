@@ -249,6 +249,29 @@ test("payment deletion can be undone after reload and syncs only when Undo expir
   expect((await snapshot(page)).payments).toEqual([]);
 });
 
+test("the ledger reopens and accepts a payment when the foreground session check is stalled", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  const stalled = Promise.withResolvers<void>();
+  await page.route("**/api/me", () => { stalled.resolve(); });
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await stalled.promise;
+
+  await test.step("return to the cached ledger and save a payment", async () => {
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(page.getByText("Opening ledger…")).toBeVisible();
+    await page.evaluate(() => {
+      Reflect.deleteProperty(document, "visibilityState");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(page.getByRole("heading", { name: "Mom", exact: true })).toBeVisible();
+    await cash(page, "25");
+    await figure(page, "Payments received", 2_500);
+  }, { timeout: 2_000 });
+});
+
 test("Undo expires on time while the session check is stalled", async ({ app, page }) => {
   await page.clock.install();
   await seedPerson(page, app.url);

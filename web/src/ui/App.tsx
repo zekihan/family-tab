@@ -72,6 +72,38 @@ function EntrySheet({ action, token, onClose }: { action: EntryAction; token?: E
   </Sheet>;
 }
 
+function HomeMenu() {
+  const { store, snapshot } = useLedgerUI();
+  const [status, setStatus] = useState("");
+
+  async function sync() {
+    if (snapshot.sync.offline) {
+      setStatus("Offline");
+      return;
+    }
+    setStatus("Syncing…");
+    try {
+      await store.syncNow();
+      const result = store.getSnapshot().sync;
+      if (result.offline) setStatus("Offline");
+      else if (result.needsSignIn) setStatus("Sign in to sync");
+      else if (result.restoreInProgress) setStatus("Restore in progress");
+      else setStatus(result.lastError ? "Sync failed" : "Synced just now");
+    } catch {
+      setStatus("Sync failed");
+    }
+  }
+
+  return <details className="menu">
+    <summary className="button secondary">Menu <span aria-hidden="true">⌄</span></summary>
+    <nav aria-label="Main menu">
+      <button type="button" disabled={status === "Syncing…"} onClick={() => void sync()}>Sync now</button>
+      <p className="hint" role="status">{status}</p>
+      <a href="#/settings">Settings</a>
+    </nav>
+  </details>;
+}
+
 function Workspace() {
   const { snapshot } = useLedgerUI();
   const path = useSyncExternalStore(subscribeRoute, routePath);
@@ -99,12 +131,7 @@ function Workspace() {
     <header className={home ? "app-header" : "app-header sticky-header"}>
       <div className="shell header-content">
         <a className="brand" href="#/"><img src="/icon.svg" alt="" width="34" height="34" /> Family Tab</a>
-        {home ? <details className="menu">
-          <summary className="button secondary">Menu <span aria-hidden="true">⌄</span></summary>
-          <nav aria-label="Main menu">
-            <a href="#/settings">Settings</a>
-          </nav>
-        </details> : <a className="button quiet" href={personArchived ? "#/archive" : "#/"}>‹ {personArchived ? "Archive" : "Home"}</a>}
+        {home ? <HomeMenu /> : <a className="button quiet" href={personArchived ? "#/archive" : "#/"}>‹ {personArchived ? "Archive" : "Home"}</a>}
       </div>
     </header>
     <main className="shell workspace" ref={main}>
