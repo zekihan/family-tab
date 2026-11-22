@@ -66,6 +66,8 @@ func run() error {
 		ClientID:       cfg.OIDCClientID,
 		ClientSecret:   cfg.OIDCClientSecret,
 		BuyerSubject:   cfg.BuyerSubject,
+		MCPClientID:    cfg.MCPClientID,
+		MCPAudience:    cfg.MCPAudience,
 		CookieInsecure: cfg.CookieInsecure,
 	}, st.DB())
 	if err != nil {

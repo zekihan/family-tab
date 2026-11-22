@@ -25,7 +25,7 @@ type authFixture struct {
 	now      time.Time
 }
 
-func newFixture(t *testing.T, insecure bool) *authFixture {
+func openTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
 
 	db, err := sqlx.Open("sqlite", ":memory:")
@@ -48,6 +48,14 @@ func newFixture(t *testing.T, insecure bool) *authFixture {
 		}
 	}
 
+	return db
+}
+
+func newFixture(t *testing.T, insecure bool) *authFixture {
+	t.Helper()
+
+	db := openTestDB(t)
+
 	provider, err := mockoidc.Run()
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +74,8 @@ func newFixture(t *testing.T, insecure bool) *authFixture {
 		ClientID:       provider.ClientID,
 		ClientSecret:   provider.ClientSecret,
 		BuyerSubject:   mockoidc.DefaultUser().Subject,
+		MCPClientID:    "",
+		MCPAudience:    "",
 		CookieInsecure: insecure,
 	}, db)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -32,13 +33,20 @@ const (
 	timestampLayout = "2006-01-02T15:04:05.000000000Z"
 )
 
+var errNoJWKS = errors.New("OIDC discovery document has no jwks_uri")
+
 // Config holds what the auth service needs from the server configuration.
 type Config struct {
-	PublicURL      string
-	Issuer         string
-	ClientID       string
-	ClientSecret   string
-	BuyerSubject   string
+	PublicURL    string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	BuyerSubject string
+	// MCPClientID is the OAuth client whose access tokens may call /mcp; empty
+	// disables MCP.
+	MCPClientID string
+	// MCPAudience is the resource the access tokens must name in aud.
+	MCPAudience    string
 	CookieInsecure bool
 }
 
@@ -47,6 +55,7 @@ type Service struct {
 	db       *sqlx.DB
 	oauth    *oauth2.Config
 	verifier *oidc.IDTokenVerifier
+	bearer   *oidc.IDTokenVerifier
 	now      func() time.Time
 	cfg      Config
 }
@@ -59,11 +68,24 @@ func New(ctx context.Context, cfg *Config, db *sqlx.DB) (*Service, error) {
 		return nil, fmt.Errorf("discover OIDC provider: %w", err)
 	}
 
+	var discovery struct {
+		JWKSURL string `json:"jwks_uri"` //nolint:tagliatelle // OIDC discovery field name.
+	}
+
+	err = provider.Claims(&discovery)
+	if err != nil || discovery.JWKSURL == "" {
+		return nil, errNoJWKS
+	}
+
+	// One key set serves both verifiers, so keys are fetched and cached once.
+	keySet := oidc.NewRemoteKeySet(ctx, discovery.JWKSURL)
+
 	service := &Service{
 		cfg:      *cfg,
 		db:       db,
 		now:      time.Now,
 		verifier: nil,
+		bearer:   nil,
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -72,7 +94,7 @@ func New(ctx context.Context, cfg *Config, db *sqlx.DB) (*Service, error) {
 			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
 		},
 	}
-	service.verifier = provider.VerifierContext(ctx, &oidc.Config{
+	service.verifier = oidc.NewVerifier(cfg.Issuer, keySet, &oidc.Config{
 		ClientID: cfg.ClientID,
 		SupportedSigningAlgs: []string{
 			oidc.RS256, oidc.RS384, oidc.RS512,
@@ -86,6 +108,11 @@ func New(ctx context.Context, cfg *Config, db *sqlx.DB) (*Service, error) {
 		SkipIssuerCheck:            false,
 		InsecureSkipSignatureCheck: false,
 	})
+	service.bearer = newBearerVerifier(
+		cfg.Issuer,
+		keySet,
+		func() time.Time { return service.now() },
+	)
 
 	return service, nil
 }
