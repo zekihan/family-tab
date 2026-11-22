@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { changeLocal, openLedger, readLocal } from "../../src/data/db.ts";
+import { createStore } from "../../src/data/index.ts";
 import { applyOperation } from "../../src/data/model.ts";
 import * as ledger from "../../src/ledger/index.ts";
 import type { Operation, RestoreRequest } from "../../src/types.ts";
@@ -302,6 +303,40 @@ test("a changed generation reported by receipts moves queued work to review befo
   assert.equal(store.getSnapshot().reviewItems[0].restore, true);
 });
 
+test("discarding an offline rename after another device restores leaves only the payday change", async () => {
+  const { store, clock, server, rules } = harness();
+  const mom = { ...person, name: "Mom" };
+  server.replace({ ...initial(), people: [mom, other] });
+  await store.start();
+  const otherDevice = createStore({ dbName: crypto.randomUUID(), fetch: server.fetch, rules,
+    online: () => true, automatic: false });
+  await otherDevice.start();
+  const file = await otherDevice.exportBackup();
+
+  clock.online = false;
+  const rename = await store.updateRecord("person", mom.id, token(store, mom), { name: "Discard me" });
+  assert.equal(rename.status, "saved");
+  const renamed = store.getSnapshot().records.people[0];
+  const payday = await store.updateRecord("person", mom.id, token(store, renamed), { payday: 15 });
+  assert.equal(payday.status, "saved");
+  await otherDevice.commitRestore(await otherDevice.previewRestore(file));
+
+  clock.online = true;
+  await store.syncNow();
+  assert.equal(server.operations.length, 0);
+  assert.deepEqual(store.getSnapshot().reviewItems.map(item => [item.op.id, item.restore]),
+    [[rename.opId, true], [payday.opId, true]]);
+  assert.equal((await store.discard(rename.opId)).status, "saved");
+  const [ready] = store.getSnapshot().reviewItems;
+  assert.equal(ready.waitingOnEarlier, false);
+  assert.deepEqual(ready.local, { ...mom, payday: 15, version: payday.opId });
+  assert.equal((await store.keepLocal(payday.opId, ready)).status, "saved");
+  await store.syncNow();
+  const sent = server.operations[0].items[0].op;
+  assert.deepEqual(sent.kind === "update" && [sent.baseVersion, sent.patch], [ready.server?.version, { payday: 15 }]);
+  assert.deepEqual(server.snapshot.people[0], { ...mom, payday: 15, version: sent.id });
+});
+
 test("a newer receipt forces refetch; an interrupted commit retries by stored receipt", async () => {
   const { store, clock, server } = harness();
   await store.start();
@@ -480,6 +515,35 @@ test("restore review update uses the restored record as a base", async () => {
   const sent = server.operations[0].items[0].op;
   assert.equal(sent.kind === "update" && sent.baseVersion, person.version);
   assert.equal(applyOperation(initial(), sent).people[0].name, "Edited");
+});
+
+test("an imported settings create proposes its own time zone against restored settings", async () => {
+  const { store, server } = harness({ rules: ledger });
+  await store.start();
+  const record = { id: "ledger", currency: "TRY", timeZone: "Europe/Istanbul" };
+  const create: Operation = { id: crypto.randomUUID(), generation: initial().generation,
+    createdAt: "2026-11-22T00:00:00Z", recordType: "settings", recordId: "ledger", kind: "create", record };
+  const matchingRecord = { ...record, timeZone: "UTC" };
+  const reflected: Operation = { ...create, id: crypto.randomUUID(), record: matchingRecord };
+  const file = backup([
+    { order: 0, op: reflected, dependencies: [], reason: null },
+    { order: 1, op: create, dependencies: [], reason: "Settings already exist." },
+  ]);
+  await store.commitRestore(await store.previewRestore(file));
+
+  const { reviewItems, records } = store.getSnapshot();
+  assert.deepEqual(reviewItems.map(item => item.op.id), [create.id]);
+  const [reviewed] = reviewItems;
+  assert.equal(records.settings?.timeZone, "UTC");
+  assert.deepEqual(reviewed.server, records.settings);
+  assert.deepEqual(reviewed.local, { ...record, version: create.id });
+  assert.equal((await store.keepLocal(create.id, reviewed)).status, "saved");
+  await store.syncNow();
+  const sent = server.operations[0].items[0].op;
+  assert.deepEqual(sent.kind === "update" && [sent.baseVersion, sent.patch],
+    [records.settings?.version, { timeZone: "Europe/Istanbul" }]);
+  assert.deepEqual(server.snapshot.settings, { ...record, version: sent.id });
+  assert.deepEqual(store.getSnapshot().reviewItems, []);
 });
 
 test("discarding a restore prerequisite leaves only the dependent payday change", async t => {

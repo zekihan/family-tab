@@ -33,6 +33,14 @@ test("applyOperation changes only patchable fields and uses the operation ID as 
   assert.equal(reflects(moved, move), true);
 });
 
+test("only a complete matching create record is reflected", () => {
+  const create: Operation = { ...common, kind: "create", id: "create", recordId: person.id,
+    recordType: "person", record: { id: person.id } };
+  const { version: _version, ...record } = person;
+  assert.equal(reflects(initial(), create), false);
+  assert.equal(reflects(initial(), { ...create, record }), true);
+});
+
 test("queue deps account for moves, refunds, person creates and independent settings", () => {
   const create: Operation = { ...common, id: "create-person", kind: "create",
     recordType: "person", recordId: other.id, record: { ...person, id: other.id } };

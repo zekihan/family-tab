@@ -2,7 +2,7 @@ import type { OpResult, OpsRequest, OpsResponse, Receipt, Snapshot } from "../ty
 import type { Api } from "./api.ts";
 import { changeLocal, LocalStateError, readLocal } from "./db.ts";
 import type { LedgerDB, LocalState } from "./db.ts";
-import { affectedPeople, applyOperation, emptyRecords, findRecord, reflects, replay } from "./model.ts";
+import { affectedPeople, emptyRecords, findRecord, proposedRecord, reflects, replay } from "./model.ts";
 import type { QueueEntry } from "./model.ts";
 
 const MAX_BATCH_BYTES = 1024 * 1024;
@@ -23,7 +23,7 @@ function observeResults(state: LocalState, generation: string, results: OpResult
   const byId = new Map(results.map(result => [result.opId, result]));
   state.queue = state.queue.map(row => {
     const result = byId.get(row.op.id);
-    // Preserve the intended record and the original operation while the ledger changes.
+    // The original operation is reapplied to the restored snapshot during review.
     if (row.op.generation !== generation || (result && "generation" in result && result.generation !== generation) ||
         (row.state === "acked" && row.receipt.generation !== generation)) return restoreReview(row);
     if (!result || result.status === "skipped" || (row.state === "needsReview" && row.restore)) return row;
@@ -117,8 +117,7 @@ export function importUnapplied(state: LocalState, snapshot: Snapshot, now: numb
   for (const row of [...unapplied].sort((a, b) => a.order - b.order)) {
     const op = row.op;
     if (known.has(op.id) || reflects(snapshot, op)) continue;
-    const intended = findRecord(applyOperation(snapshot, op), op.recordType, op.recordId);
-    const local = op.kind === "update" && intended?.version !== op.id ? null : intended;
+    const local = proposedRecord(findRecord(snapshot, op.recordType, op.recordId), op);
     imported.push({
       ...restoreReview({ op, order: row.order, state: "sendable",
         local, people: affectedPeople(snapshot, op), dependencies: row.dependencies }),

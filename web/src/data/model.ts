@@ -24,23 +24,20 @@ export function patchFields(type: RecordType, fields: Record<string, unknown>) {
     !(type === "settings" && key === "currency")));
 }
 
+export function proposedRecord(current: LedgerRecord | null, op: Operation): LedgerRecord | null {
+  if (op.kind === "create") return { ...op.record, id: op.recordId, version: op.id } as LedgerRecord;
+  if (op.kind === "update" && current) {
+    return { ...current, ...patchFields(op.recordType, op.patch), version: op.id };
+  }
+  return null;
+}
+
 export function applyOperation(records: Records, op: Operation): Records {
   const current = findRecord(records, op.recordType, op.recordId);
-  let next: LedgerRecord | null;
-  switch (op.kind) {
-    case "create":
-      if (current) return records;
-      next = { ...op.record, id: op.recordId, version: op.id } as LedgerRecord;
-      break;
-    case "update":
-      if (!current) return records;
-      next = { ...current, ...patchFields(op.recordType, op.patch), version: op.id };
-      break;
-    case "delete":
-      if (!current || op.recordType === "settings") return records;
-      next = null;
-      break;
-  }
+  if (op.kind === "create" && current) return records;
+  if (op.kind !== "create" && !current) return records;
+  if (op.kind === "delete" && op.recordType === "settings") return records;
+  const next = proposedRecord(current, op);
   if (op.recordType === "settings") return { ...records, settings: next as Records["settings"] };
   const key = collections[op.recordType];
   const rows: LedgerRecord[] = records[key];
@@ -153,9 +150,11 @@ export function reflects(records: Records, op: Operation): boolean {
   const record = findRecord(records, op.recordType, op.recordId);
   if (op.kind === "delete") return record === null;
   if (!record) return false;
+  const { version: _version, ...content } = record;
   const intended = op.kind === "create" ? op.record : patchFields(op.recordType, op.patch);
-  return Object.entries(intended).every(([key, value]) =>
-    key === "version" || (record as unknown as Record<string, unknown>)[key] === value);
+  const fields = Object.entries(intended).filter(([key]) => key !== "version");
+  return (op.kind !== "create" || fields.length === Object.keys(content).length) &&
+    fields.every(([key, value]) => Object.hasOwn(content, key) && (content as Record<string, unknown>)[key] === value);
 }
 
 export function unappliedOperations(excluded: QueueEntry[], waiting: Map<string, string[]>): UnappliedOperation[] {

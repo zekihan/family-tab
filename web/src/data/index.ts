@@ -13,7 +13,9 @@ import { backupRecords, countRecords, parseBackup, reviewOperation, reviewRecord
 import { changeLocal, draft, finishLogout, LocalStateError, openLedger, purge, readLocal } from "./db.ts";
 import type { LedgerDB, LocalState } from "./db.ts";
 import { withSyncLock } from "./lock.ts";
-import { affectedPeople, applyOperation, emptyRecords, findRecord, patchFields, related, replay, unappliedOperations } from "./model.ts";
+import {
+  affectedPeople, applyOperation, emptyRecords, findRecord, patchFields, proposedRecord, related, replay, unappliedOperations,
+} from "./model.ts";
 import type { QueueEntry } from "./model.ts";
 import { ensureLatestApp } from "./service-worker.ts";
 import { assertSession, importUnapplied, syncLedger } from "./sync.ts";
@@ -131,14 +133,11 @@ function reviewServer(snapshot: Snapshot | undefined, row: Extract<QueueEntry, {
   return findRecord(snapshot ?? emptyRecords, op.recordType, op.recordId);
 }
 
-function reviewLocal(records: Records, row: Extract<QueueEntry, { state: "needsReview" }>) {
+function reviewLocal(current: LedgerRecord | null, row: Extract<QueueEntry, { state: "needsReview" }>) {
   const { op } = row;
   if (!row.restore) return row.local;
-  // Backup imports carry a dependency array, even when empty. Rebuild their
-  // patches using committed records each time a prerequisite is resolved.
-  const local = row.dependencies && op.kind === "update"
-    ? findRecord(applyOperation(records, op), op.recordType, op.recordId) : row.local;
-  return reviewRecord(op.recordType, local);
+  if (op.kind === "update" && !validPatch(op.recordType, op.patch)) return null;
+  return reviewRecord(op.recordType, op.kind === "delete" ? current : proposedRecord(current, reviewOperation(op)));
 }
 
 type ReviewAction = "keepServer" | "keepLocal" | "discard" | "editAndResubmit" | "confirmAlreadyReturned";
@@ -215,10 +214,10 @@ export function createStore(options: StoreOptions = {}) {
       const op = row.restore ? reviewOperation(row.op) : row.op;
       const blockingIds = row.receipt?.blocking ?? row.ruleError?.blocking ?? [];
       const all = state.snapshot ?? emptyRecords;
+      const server = reviewServer(state.snapshot, row);
       return [{
         op, reason: row.reason, code: row.receipt?.code ?? row.ruleError?.code ?? null, restore: !!row.restore,
-        local: reviewLocal(all, row),
-        server: reviewServer(state.snapshot, row), blockingIds,
+        local: reviewLocal(server, row), server, blockingIds,
         generation: state.snapshot?.generation,
         waitingOnEarlier: view.reviewWaiting.has(op.id),
         blocking: [all.settings, ...all.people, ...all.purchases, ...all.payments, ...all.refunds, ...all.payouts]
@@ -644,10 +643,11 @@ export function createStore(options: StoreOptions = {}) {
       if (action === "confirmAlreadyReturned" && (original.recordType !== "payout" || original.kind === "delete")) {
         return invalid("Only a payout can be confirmed as money already returned.");
       }
-      const keep = action === "keepLocal" || action === "confirmAlreadyReturned" ? reviewed.local : null;
+      const local = row.restore ? reviewLocal(current, row) : reviewed.local;
+      const keep = action === "keepLocal" || action === "confirmAlreadyReturned" ? local : null;
       if (action === "confirmAlreadyReturned" && !keep) return invalid("Open Review again to see the payout.");
-      if (row.restore && !keep && !edited && original.kind === "update" &&
-          !validPatch(original.recordType, original.patch)) {
+      if (row.restore && !keep && !edited && (original.kind === "create" ||
+          (original.kind === "update" && !validPatch(original.recordType, original.patch)))) {
         return invalid("Edit and resubmit this backup change before applying it.");
       }
       const before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), time).records;
@@ -663,15 +663,20 @@ export function createStore(options: StoreOptions = {}) {
         }
         op = { ...base, kind: "delete", baseVersion: current.version, preImage: current };
       } else if (!current) {
-        const local = keep ?? (row.restore ? reviewed.local : row.local);
-        const payload = local ? noVersion(local) : original.kind === "create" ? original.record : null;
+        const replacement = keep ?? (row.restore ? local : row.local);
+        const payload = replacement ? noVersion(replacement) : original.kind === "create" ? original.record : null;
         if (!payload && !edited) return invalid("Enter the full replacement record before resubmitting.");
         const record = { ...payload, ...edited, id: original.recordId } as LedgerRecord;
         op = { ...base, kind: "create", record: noVersion(record) };
       } else {
         const fields = keep ? changedFields(current, noVersion(keep)) :
           edited ?? (original.kind === "update" ? original.patch : original.record);
-        op = { ...base, kind: "update", baseVersion: current.version, patch: patchFields(original.recordType, fields) };
+        const patch = patchFields(original.recordType, fields);
+        if (row.restore && original.kind === "create" && !edited &&
+            Object.keys(patch).length !== Object.keys(fields).length) {
+          return invalid("This change would modify a field that cannot be edited.");
+        }
+        op = { ...base, kind: "update", baseVersion: current.version, patch };
       }
       const result = enqueue(state, op, before, row.order, row.dependencies);
       if (result.status === "saved") {
