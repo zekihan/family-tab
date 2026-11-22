@@ -127,9 +127,11 @@ type BackupFile struct {
 }
 
 type RestoreRequest struct {
-	OpID             string     `json:"opId"`
-	Backup           BackupFile `json:"backup"`
-	ExpectedRevision int64      `json:"expectedRevision"`
+	// RawBackup preserves field presence when the request comes from HTTP.
+	RawBackup        json.RawMessage `json:"-"`
+	OpID             string          `json:"opId"`
+	Backup           BackupFile      `json:"backup"`
+	ExpectedRevision int64           `json:"expectedRevision"`
 }
 
 type RestoreResult struct {

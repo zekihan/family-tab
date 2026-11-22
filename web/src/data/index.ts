@@ -46,6 +46,8 @@ export interface ReviewItem {
   blockingIds: string[];
   blocking: LedgerRecord[];
   waiting: Operation[];
+  /** An earlier related change is still queued. */
+  waitingOnEarlier?: boolean;
   /** Ledger generation when the server version was displayed. */
   generation?: string;
 }
@@ -129,6 +131,16 @@ function reviewServer(snapshot: Snapshot | undefined, row: Extract<QueueEntry, {
   return findRecord(snapshot ?? emptyRecords, op.recordType, op.recordId);
 }
 
+function reviewLocal(records: Records, row: Extract<QueueEntry, { state: "needsReview" }>) {
+  const { op } = row;
+  if (!row.restore) return row.local;
+  // Backup imports carry a dependency array, even when empty. Rebuild their
+  // patches using committed records each time a prerequisite is resolved.
+  const local = row.dependencies && op.kind === "update"
+    ? findRecord(applyOperation(records, op), op.recordType, op.recordId) : row.local;
+  return reviewRecord(op.recordType, local);
+}
+
 type ReviewAction = "keepServer" | "keepLocal" | "discard" | "editAndResubmit" | "confirmAlreadyReturned";
 
 /** A framework-independent store backed by the browser's shared IndexedDB. */
@@ -205,9 +217,10 @@ export function createStore(options: StoreOptions = {}) {
       const all = state.snapshot ?? emptyRecords;
       return [{
         op, reason: row.reason, code: row.receipt?.code ?? row.ruleError?.code ?? null, restore: !!row.restore,
-        local: row.restore ? reviewRecord(op.recordType, row.local) : row.local,
+        local: reviewLocal(all, row),
         server: reviewServer(state.snapshot, row), blockingIds,
         generation: state.snapshot?.generation,
+        waitingOnEarlier: view.reviewWaiting.has(op.id),
         blocking: [all.settings, ...all.people, ...all.purchases, ...all.payments, ...all.refunds, ...all.payouts]
           .filter((record): record is LedgerRecord => !!record && blockingIds.includes(record.id)),
         waiting: state.queue.filter(candidate => {
@@ -624,15 +637,20 @@ export function createStore(options: StoreOptions = {}) {
         state.queue = remaining;
         return done;
       }
+      const time = now();
+      if (replay(state.snapshot, state.queue, time).reviewWaiting.has(opId)) {
+        return invalid("Wait for the earlier changes to be resolved.");
+      }
       if (action === "confirmAlreadyReturned" && (original.recordType !== "payout" || original.kind === "delete")) {
         return invalid("Only a payout can be confirmed as money already returned.");
       }
-      const keep = action === "keepLocal" ? reviewed.local : null;
+      const keep = action === "keepLocal" || action === "confirmAlreadyReturned" ? reviewed.local : null;
+      if (action === "confirmAlreadyReturned" && !keep) return invalid("Open Review again to see the payout.");
       if (row.restore && !keep && !edited && original.kind === "update" &&
           !validPatch(original.recordType, original.patch)) {
         return invalid("Edit and resubmit this backup change before applying it.");
       }
-      const before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), now()).records;
+      const before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), time).records;
       const base = {
         ...newOperation(generation, original.recordType, original.recordId),
         ...(action === "confirmAlreadyReturned" || original.alreadyReturned ? { alreadyReturned: true } : {}),

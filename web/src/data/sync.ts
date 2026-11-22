@@ -1,4 +1,4 @@
-import type { OpResult, OpsRequest, OpsResponse, Receipt, Records, Snapshot } from "../types.ts";
+import type { OpResult, OpsRequest, OpsResponse, Receipt, Snapshot } from "../types.ts";
 import type { Api } from "./api.ts";
 import { changeLocal, LocalStateError, readLocal } from "./db.ts";
 import type { LedgerDB, LocalState } from "./db.ts";
@@ -112,19 +112,16 @@ export async function syncLedger(
 
 export function importUnapplied(state: LocalState, snapshot: Snapshot, now: number) {
   const unapplied = state.meta.restore?.request.backup.unapplied ?? [];
-  let context: Records = snapshot;
   const known = new Set(state.queue.map(row => row.op.id));
   const imported: QueueEntry[] = [];
   for (const row of [...unapplied].sort((a, b) => a.order - b.order)) {
     const op = row.op;
     if (known.has(op.id) || reflects(snapshot, op)) continue;
-    const before = context;
-    context = applyOperation(context, op);
-    const intended = findRecord(context, op.recordType, op.recordId);
+    const intended = findRecord(applyOperation(snapshot, op), op.recordType, op.recordId);
     const local = op.kind === "update" && intended?.version !== op.id ? null : intended;
     imported.push({
       ...restoreReview({ op, order: row.order, state: "sendable",
-        local, people: affectedPeople(before, op), dependencies: row.dependencies }),
+        local, people: affectedPeople(snapshot, op), dependencies: row.dependencies }),
       reason: row.reason ?? "This change was unapplied in the restored backup.",
     });
     known.add(op.id);

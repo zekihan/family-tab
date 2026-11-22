@@ -205,6 +205,85 @@ func TestJSONRequests(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsMalformedBackupFields(t *testing.T) {
+	t.Parallel()
+
+	body := `{"opId":"` + uuid.NewString() + `","expectedRevision":0,"backup":{
+		"format":"family-tab-backup","formatVersion":1,"exportedAt":"2026-01-01T00:00:00Z",
+		"currency":"TRY","timeZone":"UTC",
+		"people":[{"id":"00000000-0000-4000-8000-000000000001","name":"Mom","payday":null,"archived":false}],
+		"purchases":[],"payments":[],"refunds":[],"payouts":[],
+		"unapplied":[{"order":0,"reason":null,"dependencies":[],"op":{
+			"id":"00000000-0000-4000-8000-000000000002","generation":"before",
+			"createdAt":"2026-01-01T00:00:00Z","kind":"update","recordType":"person",
+			"recordId":"00000000-0000-4000-8000-000000000001","baseVersion":"previous","patch":{"payday":15}
+		}}]
+	}}`
+
+	for _, test := range []struct {
+		name, old, replacement string
+	}{
+		{"missing payday", `"payday":null,`, ""},
+		{"missing archived", `,"archived":false`, ""},
+		{"unknown record field", `"archived":false`, `"archived":false,"extra":null`},
+		{"missing order", `"order":0,`, ""},
+		{"null order", `"order":0`, `"order":null`},
+		{"missing reason", `"reason":null,`, ""},
+		{"missing dependencies", `"dependencies":[],`, ""},
+		{"false alreadyReturned on person", `"recordType":"person",`, `"recordType":"person","alreadyReturned":false,`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, svc := testAPI(t)
+
+			before, err := svc.Snapshot(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result := postRestore(t, handler, strings.Replace(body, test.old, test.replacement, 1))
+			if result.Status != protocol.StatusRejected || result.Code == nil ||
+				*result.Code != ledger.CodeInvalid {
+				t.Fatalf("unexpected restore result: %+v", result)
+			}
+
+			after, err := svc.Snapshot(t.Context())
+			if err != nil || !reflect.DeepEqual(after, before) {
+				t.Fatalf("malformed backup changed the ledger: %+v, error %v", after, err)
+			}
+		})
+	}
+
+	handler, _ := testAPI(t)
+
+	if result := postRestore(t, handler, body); result.Status != protocol.StatusApplied {
+		t.Fatalf("valid backup without a record version was rejected: %+v", result)
+	}
+}
+
+func postRestore(t *testing.T, handler http.Handler, body string) *protocol.RestoreResult {
+	t.Helper()
+
+	request := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "/api/restore", strings.NewReader(body),
+	)
+	request.Header.Set(protocol.HeaderName, protocol.HeaderValue)
+	request.Header.Set("Content-Type", mediaJSON)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	result := new(protocol.RestoreResult)
+
+	err := json.Unmarshal(response.Body.Bytes(), result)
+	if response.Code != http.StatusOK || err != nil {
+		t.Fatalf("restore returned %d %s, decode error %v", response.Code, response.Body, err)
+	}
+
+	return result
+}
+
 func TestOperationWireReceipt(t *testing.T) {
 	t.Parallel()
 

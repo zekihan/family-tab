@@ -233,6 +233,37 @@ test("Keep mine restores the displayed payment owner and fields", async () => {
   assert.deepEqual(server.snapshot.payments, [{ ...reviewed.local, version: sent.id }]);
 });
 
+test("confirming cash returned uses the displayed payout and rejects a stale review", async () => {
+  const { store, clock, server, createAnother } = harness();
+  const original = { id: crypto.randomUUID(), version: "payout-v1", personId: person.id,
+    amountMinor: 1_000, paidOutOn: "2026-11-22", note: null };
+  server.replace({ ...initial(), payouts: [original] });
+  await store.start();
+  clock.online = false;
+  const saved = await store.updateRecord("payout", original.id, token(store, original), { amountMinor: 8_000 });
+  assert.equal(saved.status, "saved");
+  server.result.decide = op => op.id === saved.opId
+    ? { status: "rejected", code: "payout_exceeds_credit", reason: "Above credit" } : undefined;
+  clock.online = true;
+  await store.syncNow();
+  const [opened] = store.getSnapshot().reviewItems;
+  const moved = { ...original, personId: other.id, note: "Moved", version: "payout-v2" };
+  server.replace({ ...server.snapshot, payouts: [moved], revision: 4 });
+  await createAnother().start();
+  assert.deepEqual(await store.confirmAlreadyReturned(saved.opId, opened),
+    { status: "stale", current: moved, generation: initial().generation });
+
+  const [reviewed] = store.getSnapshot().reviewItems;
+  assert.deepEqual(reviewed.local, { ...original, amountMinor: 8_000, version: saved.opId });
+  assert.equal((await store.confirmAlreadyReturned(saved.opId, reviewed)).status, "saved");
+  await store.syncNow();
+  const sent = server.operations.at(-1)!.items[0].op;
+  assert.equal(sent.alreadyReturned, true);
+  assert.deepEqual(sent.kind === "update" && [sent.baseVersion, sent.patch],
+    [moved.version, { personId: person.id, amountMinor: 8_000, note: null }]);
+  assert.deepEqual(server.snapshot.payouts, [{ ...reviewed.local, version: sent.id }]);
+});
+
 test("held operations enter restore review and operations reflected by the new generation disappear", async () => {
   const { store, clock, server } = harness();
   await store.start();
@@ -449,6 +480,41 @@ test("restore review update uses the restored record as a base", async () => {
   const sent = server.operations[0].items[0].op;
   assert.equal(sent.kind === "update" && sent.baseVersion, person.version);
   assert.equal(applyOperation(initial(), sent).people[0].name, "Edited");
+});
+
+test("discarding a restore prerequisite leaves only the dependent payday change", async t => {
+  for (const explicitDependency of [true, false]) {
+    await t.test(explicitDependency ? "explicit dependency" : "earlier related change", async () => {
+      const { store, server } = harness();
+      await store.start();
+      const rename: Operation = { id: crypto.randomUUID(), recordType: "person", recordId: person.id,
+        kind: "update", baseVersion: person.version, generation: initial().generation,
+        createdAt: "2026-11-22T00:00:00Z", patch: { name: "Discard me" } };
+      const payday: Operation = { ...rename, id: crypto.randomUUID(), baseVersion: rename.id, patch: { payday: 15 } };
+      const file = backup([
+        { order: 0, op: rename, dependencies: [], reason: "Review the name" },
+        { order: 1, op: payday, dependencies: explicitDependency ? [rename.id] : [], reason: null },
+      ]);
+      await store.commitRestore(await store.previewRestore(file));
+      const [first, waiting] = store.getSnapshot().reviewItems;
+      assert.deepEqual(first.waiting.map(op => op.id), [payday.id]);
+      assert.equal(waiting.waitingOnEarlier, true);
+      assert.equal((await store.keepLocal(payday.id, waiting)).status, "invalid");
+      assert.equal((await store.editAndResubmit(payday.id, { payday: 15 }, waiting)).status, "invalid");
+      await store.syncNow();
+      assert.equal(server.operations.length, 0);
+
+      assert.equal((await store.discard(rename.id)).status, "saved");
+      const [ready] = store.getSnapshot().reviewItems;
+      assert.equal(ready.waitingOnEarlier, false);
+      assert.deepEqual(ready.local, { ...person, payday: 15, version: payday.id });
+      assert.equal((await store.keepLocal(payday.id, ready)).status, "saved");
+      await store.syncNow();
+      const sent = server.operations[0].items[0].op;
+      assert.deepEqual(sent.kind === "update" && sent.patch, { payday: 15 });
+      assert.deepEqual(server.snapshot.people[0], { ...person, payday: 15, version: sent.id });
+    });
+  }
 });
 
 test("a definitive restore rejection clears pending state and allows another restore", async t => {

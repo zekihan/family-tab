@@ -194,22 +194,25 @@ function ReviewCard({ item }: { item: ReviewItem }) {
             waiting.kind === "delete" ? waiting.preImage : null) ?? waiting.recordId}
       </li>)}</ul>
     </section>}
+    {item.waitingOnEarlier && <p className="hint">Waiting for earlier changes to be resolved.</p>}
     <div className="actions">
       {actions.keepServer && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepServer(op.id, item))}>Keep server</button>}
-      {actions.keep && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepLocal(op.id, item))}>{item.restore ? "Apply to restored ledger" : "Keep mine"}</button>}
-      {actions.edit && <button className="button secondary" disabled={busy} onClick={() => setEditor(item)}>Edit and resubmit</button>}
-      {!actions.edit && !actions.keep && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepLocal(op.id, item))}>Retry deletion</button>}
+      {!item.waitingOnEarlier && <>
+        {actions.keep && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepLocal(op.id, item))}>{item.restore ? "Apply to restored ledger" : "Keep mine"}</button>}
+        {actions.edit && <button className="button secondary" disabled={busy} onClick={() => setEditor(item)}>Edit and resubmit</button>}
+        {!actions.edit && !actions.keep && <button className="button secondary" disabled={busy} onClick={() => void save.submit(() => store.keepLocal(op.id, item))}>Retry deletion</button>}
+        {actions.confirmPayout && item.local && <button className="button secondary" disabled={busy} onClick={() => setConfirmer(item)}>Confirm cash already returned</button>}
+      </>}
       {!actions.keepServer && <button className="button quiet" disabled={busy} onClick={() => void save.submit(() => store.discard(op.id))}>Discard</button>}
-      {actions.confirmPayout && <button className="button secondary" disabled={busy} onClick={() => setConfirmer(item)}>Confirm cash already returned</button>}
     </div>
     {save.error && !confirmer && <p className="error-text" role="alert">{save.error}</p>}
-    {editor && <Sheet title={`Resubmit ${recordLabels[op.recordType]}`} onClose={() => setEditor(null)}>
+    {editor && !item.waitingOnEarlier && <Sheet title={`Resubmit ${recordLabels[op.recordType]}`} onClose={() => setEditor(null)}>
       <ReviewEditor item={editor} onSaved={() => { setEditor(null); notify("Change resubmitted."); }} />
     </Sheet>}
-    {confirmer && <Sheet title="Confirm cash already returned" onClose={() => setConfirmer(null)}>
+    {confirmer && !item.waitingOnEarlier && <Sheet title="Confirm cash already returned" onClose={() => setConfirmer(null)}>
       <SaveForm {...save} label="Confirm cash already returned" onSave={() => void save.submit(() => store.confirmAlreadyReturned(op.id, confirmer))}>
         <p>Confirm only if you have already returned this cash. The payout may create a cash shortfall.</p>
-        <RecordSummary record={local} records={snapshot.records} />
+        <RecordSummary record={confirmer.local} records={snapshot.records} />
       </SaveForm>
     </Sheet>}
   </article>;

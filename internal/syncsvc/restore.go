@@ -108,6 +108,15 @@ func restoreRecords(req *protocol.RestoreRequest, now time.Time) (*ledger.Record
 		return nil, "Restore operation ID must be a lowercase UUIDv4."
 	}
 
+	if req.RawBackup != nil {
+		var err error
+
+		backup, err = decodeBackup(req.RawBackup)
+		if err != nil {
+			return nil, err.Error()
+		}
+	}
+
 	if backup.Format != protocol.BackupFormat ||
 		backup.FormatVersion != protocol.BackupFormatVersion {
 		return nil, "Unsupported backup format or version."

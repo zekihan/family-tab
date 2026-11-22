@@ -44,7 +44,7 @@ func (srv *Server) apiHandler() http.Handler {
 			requireSession(jsonEndpoint(srv.apply)), http.MethodPost,
 		},
 		"/api/restore": {
-			requireSession(jsonEndpoint(srv.deps.Sync.Restore)), http.MethodPost,
+			requireSession(jsonEndpoint(srv.restore)), http.MethodPost,
 		},
 	}
 
@@ -94,6 +94,29 @@ func me(w http.ResponseWriter, r *http.Request) {
 func (srv *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 	value, err := srv.deps.Sync.Snapshot(r.Context())
 	writeResult(w, r, value, err)
+}
+
+type restoreRequest struct {
+	OpID             string          `json:"opId"`
+	Backup           json.RawMessage `json:"backup"`
+	ExpectedRevision int64           `json:"expectedRevision"`
+}
+
+func (srv *Server) restore(
+	ctx context.Context,
+	req *restoreRequest,
+) (*protocol.RestoreResult, error) {
+	restore := new(protocol.RestoreRequest)
+	restore.RawBackup = req.Backup
+	restore.OpID = req.OpID
+	restore.ExpectedRevision = req.ExpectedRevision
+
+	value, err := srv.deps.Sync.Restore(ctx, restore)
+	if err != nil {
+		return nil, fmt.Errorf("restore backup: %w", err)
+	}
+
+	return value, nil
 }
 
 type opsResponse struct {

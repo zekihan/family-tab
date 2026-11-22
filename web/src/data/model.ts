@@ -109,9 +109,11 @@ export function replay(
   let context = snapshot;
   const excluded: QueueEntry[] = [];
   const held: QueueEntry[] = [];
+  const earlierRows: QueueEntry[] = [];
   const items: { op: Operation; deps: string[] }[] = [];
   const sent: QueueEntry[] = [];
   const waiting = new Map<string, string[]>();
+  const reviewWaiting = new Set<string>();
 
   for (const entry of queue) {
     const op = entry.op;
@@ -120,6 +122,10 @@ export function replay(
       people: [...new Set([...entry.people, ...affectedPeople(context, op)])],
     };
     context = applyOperation(context, op);
+    if (row.state === "needsReview" && earlierRows.some(earlier => related(earlier, row))) {
+      reviewWaiting.add(op.id);
+    }
+    earlierRows.push(row);
     const review = excluded.filter(earlier => related(earlier, row));
     if (review.length) waiting.set(op.id, review.map(earlier => earlier.op.id));
     if (row.state === "needsReview" || review.length) {
@@ -140,7 +146,7 @@ export function replay(
       sent.push(row);
     }
   }
-  return { records, excluded, waiting, items };
+  return { records, excluded, waiting, reviewWaiting, items };
 }
 
 export function reflects(records: Records, op: Operation): boolean {
