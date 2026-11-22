@@ -72,6 +72,7 @@ export interface StoreSnapshot {
     needsSignIn: boolean;
     needsReview: boolean;
     restoreInProgress: boolean;
+    restoreRetryId: string | null;
     /** Hide login until the old server session has been revoked. */
     signOutPending: boolean;
     syncing: boolean;
@@ -88,6 +89,16 @@ export interface RestorePreview {
   revision: number;
   currentCounts: ReturnType<typeof countRecords>;
   importedCounts: ReturnType<typeof countRecords>;
+}
+
+export class RestoreTimeoutError extends Error {
+  readonly opId: string;
+
+  constructor(opId: string, cause: NetworkError) {
+    super(cause.message, { cause });
+    this.name = "RestoreTimeoutError";
+    this.opId = opId;
+  }
 }
 
 export interface StoreOptions {
@@ -180,7 +191,7 @@ export function createStore(options: StoreOptions = {}) {
       ready: !!db && !masked, buyer: null, records: emptyRecords, ledger: null, generation: null, revision: null,
       sessionEpoch: epoch ?? null,
       sync: {
-        pendingCount: 0, offline: !online(), needsSignIn, needsReview: false, restoreInProgress: false,
+        pendingCount: 0, offline: !online(), needsSignIn, needsReview: false, restoreInProgress: false, restoreRetryId: null,
         signOutPending: false, syncing: !!running, lastSyncAt: null, lastError,
       },
       reviewItems: [], pendingUndo: [],
@@ -268,6 +279,7 @@ export function createStore(options: StoreOptions = {}) {
         needsSignIn: !!state.meta.needsSignIn || !state.meta.buyer,
         needsReview: reviewItems.length > 0,
         restoreInProgress: !!state.meta.restore?.active,
+        restoreRetryId: state.meta.restore?.timedOut ? state.meta.restore.request.opId : null,
         signOutPending: false,
         syncing: !!running,
         lastSyncAt: state.meta.lastSyncAt ?? null,
@@ -314,27 +326,29 @@ export function createStore(options: StoreOptions = {}) {
       assertSession(await readLocal(database), currentEpoch);
       const fresh = await api.snapshot();
       if (fresh.generation === restored.generation && fresh.revision < restored.revision) continue;
-      await changeLocal(database, currentEpoch, state => importUnapplied(state, fresh, now()), { duringRestore: true });
+      await changeLocal(database, currentEpoch, state => {
+        importUnapplied(state, fresh, now(), state.meta.restore?.request.backup.unapplied ?? []);
+        delete state.meta.restore;
+      }, { duringRestore: true });
       return;
     }
   }
 
-  async function releaseRestore(currentEpoch: string | undefined, recover: boolean, signIn = false) {
+  async function releaseRestore(currentEpoch: string | undefined, recover: boolean, signIn = false, timedOut = false) {
     await changeLocal(requireDB(), currentEpoch, state => {
-      if (recover && state.meta.restore?.attempted) state.meta.restore.active = false;
-      else delete state.meta.restore;
+      if (recover && state.meta.restore?.attempted) {
+        state.meta.restore.active = false;
+        if (timedOut) state.meta.restore.timedOut = true;
+      } else delete state.meta.restore;
       if (signIn) state.meta.needsSignIn = true;
     }, { duringRestore: true });
     announce("restoreEnd");
   }
 
-  // Recover a committed restore's unapplied work by receipt. An unchanged revision
-  // also lets sync finish the already confirmed request with its original ID.
-  async function recoverRestore(state: LocalState, currentEpoch: string | undefined, retry = false) {
+  async function recoverRestore(state: LocalState, currentEpoch: string | undefined) {
     const request = state.meta.restore?.request;
     if (!request) return false;
-    const database = requireDB();
-    assertSession(await readLocal(database), currentEpoch);
+    assertSession(await readLocal(requireDB()), currentEpoch);
     const { receipts } = await api.receipts([request.opId]);
     const receipt = receipts.find(receipt => receipt.opId === request.opId);
     if (receipt?.status === "applied") {
@@ -342,19 +356,37 @@ export function createStore(options: StoreOptions = {}) {
       announce("restoreEnd");
     } else if (receipt) {
       await releaseRestore(currentEpoch, false);
-    } else {
-      if (!retry || (await api.snapshot()).revision !== request.expectedRevision) return false;
-      const retrying = await changeLocal(database, currentEpoch, local => {
-        if (!local.meta.restore || local.queue.length) return false;
-        local.meta.restore.active = true;
-        return true;
-      });
-      if (!retrying) return false;
-      announce("restoreStart");
-      await refresh();
-      await runRestore(request, currentEpoch);
     }
+    return !!receipt;
+  }
+
+  async function resendRestore(request: RestoreRequest, currentEpoch: string | undefined) {
+    const retrying = await changeLocal(requireDB(), currentEpoch, local => {
+      if (local.meta.restore?.request.opId !== request.opId || local.queue.length) return false;
+      local.meta.restore.active = true;
+      return true;
+    });
+    if (!retrying) return false;
+    announce("restoreStart");
+    await refresh();
+    await runRestore(request, currentEpoch);
     return true;
+  }
+
+  async function recoverCancelledRestores(state: LocalState, currentEpoch: string | undefined) {
+    const fresh = state.snapshot;
+    if (!fresh) return;
+    for (const cancelled of state.meta.cancelledRestores ?? []) {
+      // Once the revision advances, the old request has either committed or lost its chance.
+      if (cancelled.expectedRevision >= fresh.revision) continue;
+      const { receipts } = await api.receipts([cancelled.opId]);
+      await changeLocal(requireDB(), currentEpoch, local => {
+        if (local.snapshot && receipts.some(receipt => receipt.opId === cancelled.opId && receipt.status === "applied")) {
+          importUnapplied(local, local.snapshot, now(), cancelled.unapplied);
+        }
+        local.meta.cancelledRestores = local.meta.cancelledRestores?.filter(row => row.opId !== cancelled.opId);
+      });
+    }
   }
 
   async function cycle() {
@@ -378,9 +410,13 @@ export function createStore(options: StoreOptions = {}) {
         delete current.meta.needsSignIn;
       }, { duringRestore: true });
       needsSignIn = false;
-      if (state.meta.restore?.attempted) await recoverRestore(state, currentEpoch, true);
+      const pending = state.meta.restore;
+      if (pending?.attempted && !await recoverRestore(state, currentEpoch) && !pending.timedOut &&
+          (await api.snapshot()).revision === pending.request.expectedRevision) {
+        await resendRestore(pending.request, currentEpoch);
+      }
       await syncLedger(database, api, currentEpoch, now, refresh);
-      if (state.meta.restore?.attempted) {
+      if (pending?.attempted || state.meta.cancelledRestores?.length) {
         const fresh = await readLocal(database);
         // Resolve again if the revision advanced during sync. A missing receipt
         // after that advance means the interrupted request can no longer commit.
@@ -388,6 +424,7 @@ export function createStore(options: StoreOptions = {}) {
             !await recoverRestore(fresh, currentEpoch)) {
           await releaseRestore(currentEpoch, false);
         }
+        await recoverCancelledRestores(fresh, currentEpoch);
       }
       lastError = null;
       announce("change");
@@ -854,8 +891,10 @@ export function createStore(options: StoreOptions = {}) {
       assertSession(state, currentEpoch);
       const signIn = error instanceof AuthError;
       if (signIn) needsSignIn = true;
-      await releaseRestore(currentEpoch, !rejected, signIn);
+      const timeout = error instanceof NetworkError && error.timedOut;
+      await releaseRestore(currentEpoch, !rejected, signIn, timeout);
       lastError = message(error);
+      if (timeout) throw new RestoreTimeoutError(request.opId, error);
       throw error;
     } finally {
       await refresh();
@@ -886,6 +925,55 @@ export function createStore(options: StoreOptions = {}) {
       await refresh();
       await runRestore(request, currentEpoch, preview.generation);
     });
+  }
+
+  async function retryRestore(opId: string) {
+    const currentEpoch = epoch;
+    try {
+      const applied = await withSyncLock(async () => {
+        if (!online()) throw new Error("Connect to the server to restore a backup.");
+        const state = await readLocal(requireDB());
+        assertSession(state, currentEpoch);
+        const pending = state.meta.restore;
+        if (!pending?.timedOut || pending.request.opId !== opId) return false;
+        await verifyBuyer(state, currentEpoch);
+        if (pending.active) await releaseRestore(currentEpoch, true);
+        if (await recoverRestore(state, currentEpoch)) return true;
+        if (state.queue.length) throw new Error("Resolve and sync pending changes before restoring.");
+        const fresh = await api.snapshot();
+        if (fresh.revision !== pending.request.expectedRevision) {
+          if (await recoverRestore(state, currentEpoch)) return true;
+          await releaseRestore(currentEpoch, false);
+          throw new Error("The ledger changed. Preview the backup again.");
+        }
+        if (await resendRestore(pending.request, currentEpoch)) return true;
+        throw new Error("Resolve and sync pending changes before restoring.");
+      });
+      if (applied) lastError = null;
+      return applied;
+    } finally {
+      await refresh();
+    }
+  }
+
+  async function cancelRestore(opId: string) {
+    const currentEpoch = epoch;
+    await withSyncLock(async () => {
+      const cancelled = await changeLocal(requireDB(), currentEpoch, state => {
+        const pending = state.meta.restore;
+        if (!pending?.timedOut || pending.request.opId !== opId) return false;
+        const { expectedRevision, backup: { unapplied } } = pending.request;
+        // A server commit can race cancellation. Keep the work needed to finish it by receipt.
+        if (unapplied.length) (state.meta.cancelledRestores ??= []).push({ opId, expectedRevision, unapplied });
+        delete state.meta.restore;
+        return true;
+      }, { duringRestore: true });
+      if (cancelled) {
+        lastError = null;
+        announce("restoreEnd");
+      }
+    });
+    await refresh();
   }
 
   /** Update local state without forcing network access, for example after returning to the foreground. */
@@ -927,7 +1015,7 @@ export function createStore(options: StoreOptions = {}) {
       review(id, "editAndResubmit", fields, opened, newPerson),
     /** Resubmit a payout the buyer already made, even if it now exceeds credit. */
     confirmAlreadyReturned: (id: string, opened?: ReviewItem) => review(id, "confirmAlreadyReturned", undefined, opened),
-    signOut, exportBackup, previewRestore, commitRestore,
+    signOut, exportBackup, previewRestore, commitRestore, retryRestore, cancelRestore,
     /** Optional draft persistence. Pass undefined to delete a draft. */
     saveDraft: (key: string, value: unknown) => draft(requireDB(), epoch, key, { value }),
     loadDraft: (key: string) => draft(requireDB(), epoch, key),

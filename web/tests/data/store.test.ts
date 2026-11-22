@@ -7,7 +7,7 @@ import { applyOperation } from "../../src/data/model.ts";
 import * as ledger from "../../src/ledger/index.ts";
 import type { Operation, RestoreRequest } from "../../src/types.ts";
 import { reviewActions } from "../../src/ui/presentation.ts";
-import { backup, deferred, harness, initial, other, payment, person, purchase, refund, token } from "./helpers.ts";
+import { backup, deferred, fakeServer, harness, initial, other, payment, person, purchase, refund, token } from "./helpers.ts";
 
 test("a rejected setup must be resolved before setup can be queued again", async () => {
   const { store, server, clock } = harness();
@@ -971,6 +971,39 @@ test("an interrupted restore releases saves and recovers unapplied work using it
   server.hook.fetch = undefined;
   await store.syncNow();
   assert.equal(restores, 1);
+  assert.equal(store.getSnapshot().generation, server.snapshot.generation);
+  assert.deepEqual(store.getSnapshot().reviewItems.map(row => row.op.id), [op.id]);
+});
+
+test("cancelling a timed-out restore preserves unapplied work if the original request commits late", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const server = fakeServer();
+  const sent = deferred<RequestInit>();
+  const { store } = harness({ fetch: (path, init) => {
+    if (path !== "/api/restore") return server.fetch(path, init);
+    return new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+      sent.resolve(init!);
+    });
+  } });
+  await store.start();
+  const op: Operation = { id: crypto.randomUUID(), recordType: "person", recordId: person.id, kind: "update",
+    baseVersion: person.version, generation: initial().generation, createdAt: "2026-11-22T00:00:00Z",
+    patch: { name: "From backup" } };
+  const preview = await store.previewRestore(backup([{ order: 0, op, dependencies: [], reason: null }]));
+  const timedOut = assert.rejects(store.commitRestore(preview), /Could not reach/);
+  const { body } = await sent.promise;
+  t.mock.timers.tick(60_000);
+  await timedOut;
+  const { opId } = JSON.parse(String(body)) as RestoreRequest;
+  assert.equal(store.getSnapshot().sync.restoreRetryId, opId);
+
+  await store.cancelRestore(opId);
+  assert.equal(store.getSnapshot().sync.restoreRetryId, null);
+  assert.equal(store.getSnapshot().sync.restoreInProgress, false);
+  const late = await server.fetch("/api/restore", { method: "POST", body });
+  assert.equal((await late.json()).status, "applied");
+  await store.syncNow();
   assert.equal(store.getSnapshot().generation, server.snapshot.generation);
   assert.deepEqual(store.getSnapshot().reviewItems.map(row => row.op.id), [op.id]);
 });

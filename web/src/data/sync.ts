@@ -1,4 +1,4 @@
-import type { OpResult, OpsRequest, OpsResponse, Receipt, Snapshot } from "../types.ts";
+import type { OpResult, OpsRequest, OpsResponse, Receipt, Snapshot, UnappliedOperation } from "../types.ts";
 import type { Api } from "./api.ts";
 import { changeLocal, LocalStateError, readLocal } from "./db.ts";
 import type { LedgerDB, LocalState } from "./db.ts";
@@ -115,8 +115,7 @@ export async function syncLedger(
   }
 }
 
-export function importUnapplied(state: LocalState, snapshot: Snapshot, now: number) {
-  const unapplied = state.meta.restore?.request.backup.unapplied ?? [];
+export function importUnapplied(state: LocalState, snapshot: Snapshot, now: number, unapplied: UnappliedOperation[]) {
   const known = new Set(state.queue.map(row => row.op.id));
   const imported: QueueEntry[] = [];
   for (const row of [...unapplied].sort((a, b) => a.order - b.order)) {
@@ -135,5 +134,4 @@ export function importUnapplied(state: LocalState, snapshot: Snapshot, now: numb
   const offset = Math.max(0, lastImported + 1 - firstExisting);
   state.queue = [...imported, ...state.queue.map(row => offset && imported.length ? { ...row, order: row.order + offset } : row)];
   reconcile(state, snapshot, now);
-  delete state.meta.restore;
 }

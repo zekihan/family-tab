@@ -118,7 +118,9 @@ for (const invalidPayday of ["40", "1.5"]) {
     await page.getByRole("button", { name: "+ Add purchase", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Add purchase" });
     await dialog.getByRole("button", { name: "+ New person", exact: true }).click();
-    await dialog.getByLabel("Name", { exact: true }).fill("Mom");
+    const name = dialog.getByLabel("Name", { exact: true });
+    await expect(name).toBeFocused();
+    await name.fill("Mom");
     await dialog.getByLabel("What", { exact: true }).fill("Towels");
     await dialog.getByLabel("Total price").fill("100");
     const payday = dialog.getByLabel("Payday (optional)");
@@ -583,6 +585,72 @@ test("re-entering an installment date keeps the saved anchor after a payday chan
   await save(dialog);
   await synced(page);
   expect((await snapshot(page)).purchases).toMatchObject([{ id, firstDue: "2025-04-30", dueDay: 31 }]);
+});
+
+for (const changePerson of [false, true]) {
+  test(`converting a one-time purchase uses ${changePerson ? "the newly selected person's payday" : "the current person's payday"}`, async ({ app, page }) => {
+    await page.clock.setFixedTime("2026-11-22T12:00:00Z");
+    await setup(page, app.url);
+    await purchase(page, { item: "Vacuum", price: "600", newPerson: "Mom", payday: "15" });
+    if (changePerson) await purchase(page, { item: "Towels", price: "100", newPerson: "Dad", payday: "25" });
+    await person(page);
+    await synced(page);
+    const before = await snapshot(page);
+    const { id } = before.purchases.find(row => row.item === "Vacuum")!;
+    const { id: personId } = before.people.find(row => row.name === (changePerson ? "Dad" : "Mom"))!;
+
+    await page.getByRole("button", { name: "Edit Vacuum", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit purchase" });
+    await dialog.getByRole("button", { name: "In installments" }).click();
+    if (changePerson) await dialog.getByRole("button", { name: "Dad", exact: true }).click();
+    await save(dialog);
+    await synced(page);
+    expect((await snapshot(page)).purchases.find(row => row.id === id)).toMatchObject({
+      personId, firstDue: changePerson ? "2026-11-25" : "2026-12-15", dueDay: changePerson ? 25 : 15,
+    });
+  });
+}
+
+test("retyping the default first due date keeps the unchecked last-day anchor", async ({ app, page }) => {
+  await page.clock.setFixedTime("2025-02-15T12:00:00Z");
+  await setup(page, app.url);
+  await purchase(page, { item: "Towels", price: "100", newPerson: "Mom", payday: "31" });
+  await synced(page);
+
+  await page.getByRole("button", { name: "Add purchase" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add purchase" });
+  await dialog.getByLabel("What", { exact: true }).fill("Vacuum");
+  await dialog.getByLabel("Total price").fill("600");
+  await dialog.getByRole("button", { name: "In installments" }).click();
+  await dialog.getByRole("button", { name: "2", exact: true }).click();
+  const firstDue = dialog.getByLabel("First due date", { exact: true });
+  await expect(firstDue).toHaveValue("28.02.2025");
+  const lastDay = dialog.getByRole("checkbox", { name: "Last day of each month" });
+  await expect(lastDay).toBeChecked();
+  await lastDay.uncheck();
+  await firstDue.fill("");
+  await firstDue.fill("2025-02-28");
+  await expect(lastDay).not.toBeChecked({ timeout: 2_000 });
+  await expect(dialog.getByText(/28 Mar 2025/)).toBeVisible();
+  await save(dialog);
+  await synced(page);
+  expect((await snapshot(page)).purchases.find(row => row.item === "Vacuum")).toMatchObject({
+    firstDue: "2025-02-28", dueDay: 28,
+  });
+});
+
+test("an archived person with no records only offers Delete person", async ({ app, page }) => {
+  await seedPerson(page, app.url);
+  await page.getByRole("button", { name: "Archive person", exact: true }).click();
+  await page.getByRole("dialog", { name: "Archive person" }).getByRole("button", { name: "Archive person" }).click();
+  await person(page);
+  const unarchive = page.getByRole("button", { name: "Unarchive person", exact: true });
+  const remove = page.getByRole("button", { name: "Delete person", exact: true });
+  await expect(unarchive).toBeVisible();
+  await expect(remove).toBeHidden();
+  await page.getByRole("button", { name: "Delete Kitchen towels", exact: true }).click();
+  await expect(remove).toBeVisible();
+  await expect(unarchive).toBeHidden({ timeout: 2_000 });
 });
 
 test("Edit person shows an inline payday error and blocks Save", async ({ app, page }) => {

@@ -4,9 +4,12 @@ import type {
 } from "../types.ts";
 
 export class NetworkError extends Error {
-  constructor(cause: unknown) {
+  readonly timedOut: boolean;
+
+  constructor(cause: unknown, timedOut = false) {
     super("Could not reach the Family Tab server.", { cause });
     this.name = "NetworkError";
+    this.timedOut = timedOut;
   }
 }
 
@@ -72,7 +75,7 @@ export function createApi(fetcher: typeof fetch = globalThis.fetch.bind(globalTh
       }
     } catch (error) {
       if (error instanceof AuthError || error instanceof ServerError) throw error;
-      throw new NetworkError(error);
+      throw new NetworkError(error, controller.signal.aborted);
     } finally {
       clearTimeout(timer);
     }

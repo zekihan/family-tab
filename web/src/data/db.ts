@@ -1,6 +1,6 @@
 import { openDB } from "idb";
 import type { DBSchema } from "idb";
-import type { Me, RestoreRequest, Snapshot } from "../types.ts";
+import type { Me, RestoreRequest, Snapshot, UnappliedOperation } from "../types.ts";
 import type { QueueEntry } from "./model.ts";
 
 export interface Meta {
@@ -9,7 +9,8 @@ export interface Meta {
   buyer?: Me;
   needsSignIn?: boolean;
   lastSyncAt?: number;
-  restore?: { request: RestoreRequest; active: boolean; attempted: boolean };
+  restore?: { request: RestoreRequest; active: boolean; attempted: boolean; timedOut?: boolean };
+  cancelledRestores?: { opId: string; expectedRevision: number; unapplied: UnappliedOperation[] }[];
 }
 
 interface FamilyTabDB extends DBSchema {

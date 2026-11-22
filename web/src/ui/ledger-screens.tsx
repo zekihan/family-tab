@@ -235,9 +235,8 @@ export function PersonPage({ id, open }: { id: string; open: (action: EntryActio
       </section>
       <div className="actions manage-person">
         <button className="button secondary" onClick={() => open({ kind: "person", record: person })}>Edit person</button>
-        {(person.archived || purchases.length > 0 || history.length > 0) &&
-          <button className="button quiet" onClick={() => open({ kind: "archive", record: person })}>{person.archived ? "Unarchive person" : "Archive person"}</button>}
-        {purchases.length === 0 && history.length === 0 &&
+        {purchases.length > 0 || history.length > 0 ?
+          <button className="button quiet" onClick={() => open({ kind: "archive", record: person })}>{person.archived ? "Unarchive person" : "Archive person"}</button> :
           <button className="button quiet" disabled={sync.restoreInProgress} onClick={() => remove("person", person)}>Delete person</button>}
       </div>
     </> : <section className="section"><h1 tabIndex={-1}>Person unavailable</h1><a href="#/" className="button secondary">Back to Home</a></section>}

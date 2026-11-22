@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { RestoreTimeoutError } from "../data/index.ts";
 import type { EditToken, RestorePreview, ReviewItem, SaveResult } from "../data/index.ts";
 import { isValidDate } from "../ledger/index.ts";
 import { SETTINGS_ID } from "../types.ts";
@@ -11,7 +12,7 @@ export function SettingsPage() {
   const { snapshot, store, notify } = useLedgerUI();
   const settings = snapshot.records.settings!;
   const [zoneEdit, setZoneEdit] = useState<{ settings: Settings; token: EditToken } | null>(null);
-  const [preview, setPreview] = useState<RestorePreview | null>(null);
+  const [preview, setPreview] = useState<(RestorePreview & { timeout?: RestoreTimeoutError }) | null>(null);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,7 +41,27 @@ export function SettingsPage() {
   }
 
   const { sync } = snapshot;
+  const { restoreRetryId } = sync;
   const canSync = !sync.offline && !sync.needsSignIn && !sync.restoreInProgress;
+  const canRestore = canSync && sync.pendingCount === 0;
+  const showingPreview = preview && (!preview.timeout || preview.timeout.opId === restoreRetryId) ? preview : null;
+  const previewRetryId = showingPreview?.timeout?.opId;
+
+  function retryRestore(id: string) {
+    void run(async () => {
+      const applied = await store.retryRestore(id);
+      setPreview(null);
+      if (applied) notify("Backup restored.");
+    });
+  }
+
+  function cancelRestore(id: string) {
+    void run(async () => {
+      await store.cancelRestore(id);
+      setPreview(null);
+    });
+  }
+
   return <section className="section settings">
     <h1 tabIndex={-1}>Settings</h1>
     <article className="card">
@@ -53,43 +74,63 @@ export function SettingsPage() {
     </article>
     <article className="card">
       <div><h2>Restore</h2><p className="hint">Replace this ledger with a Family Tab backup. Restore requires an active session and no pending changes.</p></div>
-      <label className="field">Choose backup file
+      {restoreRetryId && !showingPreview && <div>
+        <p className="hint">The restore timed out. You can retry it or cancel.</p>
+        <div className="actions">
+          <button className="button secondary" disabled={!canRestore || busy} onClick={() => retryRestore(restoreRetryId)}>Retry restore</button>
+          <button className="button quiet" disabled={busy || sync.restoreInProgress} onClick={() => cancelRestore(restoreRetryId)}>Cancel</button>
+        </div>
+      </div>}
+      {!restoreRetryId && <label className="field">Choose backup file
         <input type="file" accept=".json,application/json" disabled={!canSync || busy}
           onChange={event => {
             const file = event.target.files?.[0];
             event.target.value = "";
             if (file) void run(async () => setPreview(await store.previewRestore(await file.text())));
           }} />
-      </label>
+      </label>}
     </article>
     <article className="card">
       <div><h2>Sign out</h2><p className="hint">Removes your saved ledger from this device.</p></div>
       <button className="button secondary" disabled={busy || sync.restoreInProgress} onClick={() => { setError(""); setConfirmSignOut(true); }}>Sign out</button>
     </article>
-    {error && !preview && !confirmSignOut && <p className="error-text" role="alert">{error}</p>}
+    {error && !showingPreview && !confirmSignOut && <p className="error-text" role="alert">{error}</p>}
     {zoneEdit && <Sheet title="Ledger time zone" onClose={() => setZoneEdit(null)}>
       <ZoneForm initial={zoneEdit.settings} token={zoneEdit.token}
         onSaved={() => { setZoneEdit(null); notify("Time zone saved."); }} />
     </Sheet>}
-    {preview && <Sheet title="Restore backup" onClose={() => { if (!busy) { setPreview(null); setError(""); } }}>
-      <SaveForm busy={busy} error={error} label="Replace ledger" blocked={!canSync || sync.pendingCount > 0}
-        onSave={() => void run(async () => {
-          await store.commitRestore(preview);
-          setPreview(null);
-          notify("Backup restored.");
-        })}>
+    {showingPreview && <Sheet title="Restore backup" onClose={() => { if (!busy) { setPreview(null); setError(""); } }}>
+      <SaveForm busy={busy} error={error || (!busy ? showingPreview.timeout?.message : undefined)}
+        label={previewRetryId ? "Retry restore" : "Replace ledger"} blocked={!canRestore}
+        onSave={() => {
+          if (previewRetryId) return retryRestore(previewRetryId);
+          void run(async () => {
+            try { await store.commitRestore(showingPreview); }
+            catch (cause) {
+              if (cause instanceof RestoreTimeoutError && store.getSnapshot().sync.restoreRetryId === cause.opId) {
+                setPreview({ ...showingPreview, timeout: cause });
+                return;
+              }
+              throw cause;
+            }
+            setPreview(null);
+            notify("Backup restored.");
+          });
+        }}>
         <p>This replaces the ledger on all devices with the records in this backup.</p>
         <dl className="summary-list">
           <div><dt>Current time zone</dt><dd>{settings.timeZone}</dd></div>
-          <div><dt>Backup time zone</dt><dd>{preview.backup.timeZone}</dd></div>
+          <div><dt>Backup time zone</dt><dd>{showingPreview.backup.timeZone}</dd></div>
         </dl>
         <table className="schedule num"><thead><tr><th scope="col">Records</th><th scope="col">Current</th><th scope="col">Backup</th></tr></thead>
           <tbody>{([
             ["People", "people"], ["Purchases", "purchases"], ["Payments", "payments"], ["Shop refunds", "refunds"], ["Cash returns", "payouts"],
-          ] as const).map(([label, key]) => <tr key={key}><th scope="row">{label}</th><td>{preview.currentCounts[key]}</td><td>{preview.importedCounts[key]}</td></tr>)}</tbody>
+          ] as const).map(([label, key]) => <tr key={key}><th scope="row">{label}</th><td>{showingPreview.currentCounts[key]}</td><td>{showingPreview.importedCounts[key]}</td></tr>)}</tbody>
         </table>
-        {preview.backup.unapplied.length > 0 && <p className="notice">The backup includes {preview.backup.unapplied.length} unapplied changes for review.</p>}
+        {showingPreview.backup.unapplied.length > 0 && <p className="notice">The backup includes {showingPreview.backup.unapplied.length} unapplied changes for review.</p>}
         {sync.pendingCount > 0 && <p className="notice">Resolve and sync pending changes before restoring. Preview the backup again if the ledger changes.</p>}
+        {previewRetryId && <button className="button quiet" type="button" disabled={busy || sync.restoreInProgress}
+          onClick={() => cancelRestore(previewRetryId)}>Cancel</button>}
       </SaveForm>
     </Sheet>}
     {confirmSignOut && <Sheet title="Sign out of this device?" onClose={() => { if (!busy) { setConfirmSignOut(false); setError(""); } }}>

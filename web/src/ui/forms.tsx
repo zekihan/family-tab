@@ -97,7 +97,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
   const invalidPayday = newPerson && newPayday !== "" && newPersonPayday === null;
   const payday = newPerson ? newPersonPayday : personPayday;
   const shortcuts = dueShortcuts(today, payday);
-  const defaultStart = savedStart ?? installmentDefault ?? defaultInstallmentStart(today, initial ? null : payday);
+  const defaultStart = savedStart ?? installmentDefault ?? defaultInstallmentStart(today, payday);
   const start = first ?? defaultStart;
   const { choice } = selectedDue;
   const onceDue = choice === "custom" ? customDue : selectedDue.date;
@@ -117,7 +117,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
     if (choice !== "none" && choice !== "custom") {
       setSelectedDue({ choice, date: dueShortcuts(today, nextPayday)[choice] });
     }
-    if (!initial) setInstallmentDefault(plan === "installments" ? defaultInstallmentStart(today, nextPayday) : null);
+    if (!savedStart) setInstallmentDefault(plan === "installments" ? defaultInstallmentStart(today, nextPayday) : null);
   }
 
   function selectPerson(id: string) {
@@ -236,7 +236,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
         <input type="number" required min="2" max="120" step="1" value={countText} onChange={event => setCountText(event.target.value)} />
       </label>}
       <DateField ref={firstDueField} label="First due date" value={start.firstDue} onChange={value => {
-        if (initial && value === start.firstDue) return;
+        if (first && value === first.firstDue) return;
         setFirst(value === defaultStart.firstDue ? defaultStart : { firstDue: value, dueDay: Number(value.slice(8)) });
       }} />
       {start.firstDue && start.firstDue === lastDayOfMonth(start.firstDue) && <label className="check">

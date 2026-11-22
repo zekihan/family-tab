@@ -685,6 +685,73 @@ test("a restore with a stalled response releases Save and recovers by its origin
   expect(after.payments).toMatchObject([{ amountMinor: 5_000 }]);
 });
 
+for (const action of ["Retry restore", "Cancel"] as const) {
+  test(`a timed-out restore waits for ${action} after a missing receipt`, async ({ app, page, context }) => {
+    await page.clock.install();
+    await seedPerson(page, app.url);
+    const before = await snapshot(page);
+    await settings(page);
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export backup" }).click();
+    const backup = await (await download).path();
+
+    const other = await context.newPage();
+    await other.goto(app.url);
+    await person(other);
+    await other.getByRole("button", { name: "Record a payment", exact: true }).click();
+    const editor = other.getByRole("dialog", { name: "Record a payment" });
+    await editor.getByLabel("Amount", { exact: true }).fill("50");
+    const saveButton = editor.getByRole("button", { name: "Save", exact: true });
+
+    const chooseBackup = page.getByLabel("Choose backup file");
+    await chooseBackup.setInputFiles(backup);
+    const confirmation = page.getByRole("dialog", { name: "Restore backup" });
+    await expect(confirmation.getByRole("row", { name: "Purchases 1 1" })).toBeVisible();
+    await page.clock.pauseAt(new Date(Date.now() + 1_000));
+
+    const stalled = Promise.withResolvers<string>();
+    const attempts: string[] = [];
+    await context.route("**/api/restore", route => {
+      const { opId } = route.request().postDataJSON();
+      attempts.push(opId);
+      if (attempts.length === 1) stalled.resolve(opId);
+      else return route.continue();
+    });
+    const checkedIds: string[] = [];
+    context.on("request", request => {
+      if (request.url().endsWith("/api/sync/receipts")) checkedIds.push(...request.postDataJSON().opIds);
+    });
+
+    await confirmation.getByRole("button", { name: "Replace ledger" }).click();
+    const opId = await stalled.promise;
+    await expect(saveButton).toBeDisabled();
+    await page.clock.fastForward(60_000);
+    await expect(confirmation.getByRole("alert")).toHaveText("Could not reach the Family Tab server.", { timeout: 3_000 });
+    await expect(saveButton).toBeEnabled();
+
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect.poll(() => checkedIds).toContain(opId);
+    await page.evaluate(() => navigator.locks.request("family-tab-sync", () => {}));
+    expect(attempts).toEqual([opId]);
+    expect((await snapshot(page)).generation).toBe(before.generation);
+    await expect(saveButton).toBeEnabled();
+
+    await page.getByRole("button", { name: action, exact: true }).click();
+    await expect(confirmation).toBeHidden();
+    if (action === "Retry restore") {
+      await expect(page.getByText("Backup restored.")).toBeVisible();
+      expect(attempts).toEqual([opId, opId]);
+      expect((await snapshot(page)).generation).not.toBe(before.generation);
+    } else {
+      await expect(chooseBackup).toBeEnabled();
+      await save(editor);
+      await synced(other);
+      expect(attempts).toEqual([opId]);
+      expect((await snapshot(page)).payments).toMatchObject([{ amountMinor: 5_000 }]);
+    }
+  });
+}
+
 test("Home menu clears its sync status when reopened", async ({ app, page }) => {
   await setup(page, app.url);
   const toggle = page.locator("summary").filter({ hasText: "Menu" });
