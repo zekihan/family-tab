@@ -150,6 +150,34 @@ func (svc *Service) Apply(
 	return response, nil
 }
 
+// CreatedAt returns when the applied create operation opID committed the
+// record, or false when no such receipt exists.
+func (svc *Service) CreatedAt(
+	ctx context.Context,
+	opID, recordType, recordID string,
+) (time.Time, bool, error) {
+	var (
+		createdAt time.Time
+		found     bool
+	)
+
+	err := svc.store.Read(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+
+		createdAt, found, err = tx.CreateReceiptTime(ctx, opID, recordType, recordID)
+		if err != nil {
+			return fmt.Errorf("read create receipt: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("look up create receipt: %w", err)
+	}
+
+	return createdAt, found, nil
+}
+
 func (svc *Service) applyItem(
 	ctx context.Context,
 	tx *store.Tx,
@@ -219,21 +247,19 @@ func (svc *Service) applyItem(
 func saveReceipt(
 	ctx context.Context,
 	tx *store.Tx,
-	opID, status string,
-	meta store.Meta,
-	now time.Time,
+	receipt *store.Receipt,
 	result any,
 ) error {
 	body, err := json.Marshal(result)
 	if err != nil {
-		return fmt.Errorf("encode receipt %q: %w", opID, err)
+		return fmt.Errorf("encode receipt %q: %w", receipt.OpID, err)
 	}
 
-	err = tx.SaveReceipt(ctx, &store.Receipt{
-		OpID: opID, Status: status, Meta: meta, CreatedAt: now, Body: body,
-	})
+	receipt.Body = body
+
+	err = tx.SaveReceipt(ctx, receipt)
 	if err != nil {
-		return fmt.Errorf("record %q outcome: %w", opID, err)
+		return fmt.Errorf("record %q outcome: %w", receipt.OpID, err)
 	}
 
 	return nil

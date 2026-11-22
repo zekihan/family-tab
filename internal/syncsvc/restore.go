@@ -99,7 +99,10 @@ func restore(
 	result.Generation = meta.Generation
 	result.Revision = meta.Revision
 
-	return saveReceipt(ctx, tx, req.OpID, result.Status, meta, now, result)
+	return saveReceipt(ctx, tx, &store.Receipt{
+		Body: nil, CreatedAt: now, OpID: req.OpID, Status: result.Status, Meta: meta,
+		Kind: "", RecordType: "", RecordID: "",
+	}, result)
 }
 
 func restoreRecords(req *protocol.RestoreRequest, now time.Time) (*ledger.Records, string) {

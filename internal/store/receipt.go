@@ -14,7 +14,12 @@ type Receipt struct {
 	CreatedAt time.Time
 	OpID      string
 	Status    string
-	Meta      Meta
+	// Kind, RecordType and RecordID name the operation's target. They are empty
+	// for restores and for receipts stored before schema v3.
+	Kind       string
+	RecordType string
+	RecordID   string
+	Meta       Meta
 }
 
 func (tx *Tx) Receipt(ctx context.Context, opID string) (Receipt, error) {
@@ -42,13 +47,51 @@ func (tx *Tx) Receipt(ctx context.Context, opID string) (Receipt, error) {
 
 func (tx *Tx) SaveReceipt(ctx context.Context, receipt *Receipt) error {
 	_, err := tx.tx.ExecContext(ctx, `
-		INSERT INTO receipts (op_id, status, generation, revision, body, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+		INSERT INTO receipts
+			(op_id, status, generation, revision, body, created_at, kind, record_type, record_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		receipt.OpID, receipt.Status, receipt.Meta.Generation, receipt.Meta.Revision,
-		string(receipt.Body), receipt.CreatedAt.UTC().Format(time.RFC3339Nano))
+		string(receipt.Body), receipt.CreatedAt.UTC().Format(time.RFC3339Nano),
+		nullIfEmpty(receipt.Kind), nullIfEmpty(receipt.RecordType), nullIfEmpty(receipt.RecordID))
 	if err != nil {
 		return fmt.Errorf("save receipt %q: %w", receipt.OpID, err)
 	}
 
 	return nil
+}
+
+// CreateReceiptTime returns the commit time of the applied receipt opID when
+// it is for a create of the given record.
+func (tx *Tx) CreateReceiptTime(
+	ctx context.Context,
+	opID, recordType, recordID string,
+) (time.Time, bool, error) {
+	var createdAt string
+
+	err := tx.tx.GetContext(ctx, &createdAt, `
+		SELECT created_at FROM receipts
+		WHERE op_id = ? AND status = 'applied' AND kind = 'create'
+			AND record_type = ? AND record_id = ?`, opID, recordType, recordID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("load create receipt %q: %w", opID, err)
+	}
+
+	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse receipt time %q: %w", createdAt, err)
+	}
+
+	return parsed, true, nil
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+
+	return value
 }

@@ -63,7 +63,10 @@ func commitOperation(
 		}
 	}
 
-	err = saveReceipt(ctx, tx, op.ID, receipt.Status, meta, now, receipt)
+	err = saveReceipt(ctx, tx, &store.Receipt{
+		Body: nil, CreatedAt: now, OpID: op.ID, Status: receipt.Status, Meta: meta,
+		Kind: op.Kind, RecordType: op.RecordType, RecordID: op.RecordID,
+	}, receipt)
 
 	return receipt, err
 }

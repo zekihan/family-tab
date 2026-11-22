@@ -119,4 +119,10 @@ var Migrations = []string{
 	ALTER TABLE refunds ADD COLUMN source TEXT NOT NULL DEFAULT 'app'
 		CHECK (source IN ('app', 'agent'));
 	`,
+	// Schema v3 - Operation targets on receipts, for agent Undo.
+	`
+	ALTER TABLE receipts ADD COLUMN kind TEXT;
+	ALTER TABLE receipts ADD COLUMN record_type TEXT;
+	ALTER TABLE receipts ADD COLUMN record_id TEXT;
+	`,
 }
