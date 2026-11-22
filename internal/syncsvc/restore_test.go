@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -291,4 +292,48 @@ func restoreOK(t *testing.T, svc *Service, req *protocol.RestoreRequest) *protoc
 	}
 
 	return result
+}
+
+func TestRestoreRejectsMalformedUnappliedWireFields(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, payload string
+	}{
+		{"create with null base version", `"kind":"create","record":` + personPayload + `,"baseVersion":null`},
+		{"create with null alias", `"kind":"create","record":` +
+			strings.Replace(personPayload, `"aliases":[]`, `"aliases":[null]`, 1)},
+		{"update with null alias", `"kind":"update","baseVersion":"previous","patch":{"aliases":[null]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, _, generation := newLedger(t)
+			apply(t, svc, item(createOp(generation, ledger.TypePerson, personID, personPayload)))
+			before := snapshot(t, svc)
+			req := restoreRequest()
+			req.ExpectedRevision = before.Revision
+
+			raw, err := json.Marshal(req.Backup)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req.RawBackup = json.RawMessage(strings.Replace(string(raw), `"unapplied":[]`,
+				`"unapplied":[{"order":0,"dependencies":[],"reason":null,"op":{`+
+					`"id":"`+uuid.NewString()+`","generation":"`+generation+`",`+
+					`"createdAt":"2025-11-22T12:00:00Z","recordType":"person","recordId":"`+personID+`",`+
+					test.payload+`}}]`, 1))
+
+			result := restoreOK(t, svc, req)
+			if result.Status != protocol.StatusRejected || result.Code == nil ||
+				*result.Code != ledger.CodeInvalid {
+				t.Fatalf("malformed backup accepted: %+v", result)
+			}
+
+			if after := snapshot(t, svc); !reflect.DeepEqual(after, before) {
+				t.Fatalf("malformed backup modified ledger: %+v", after)
+			}
+		})
+	}
 }

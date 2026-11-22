@@ -105,6 +105,13 @@ func validateUnappliedShape(rows []recordFields) error {
 			return fmt.Errorf("read unapplied operation %d: %w", index+1, err)
 		}
 
+		if matchesString(op["kind"], ledger.KindCreate) && op["baseVersion"] != nil {
+			return fmt.Errorf(
+				"%w: unapplied operation %d: a create cannot carry baseVersion",
+				errBackupShape, index+1,
+			)
+		}
+
 		if flag := op["alreadyReturned"]; flag != nil &&
 			(!matchesString(op["recordType"], ledger.TypePayout) || string(flag) == "null") {
 			return fmt.Errorf(

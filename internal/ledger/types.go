@@ -104,8 +104,8 @@ type ScheduledAmount struct {
 	AdjustedMinor int64   `json:"adjustedMinor"`
 }
 
-// PersonBalance holds the figures the server needs for payout checks. The
-// client computes the display-only figures.
+// PersonBalance holds the figures used for payout checks. BalanceView adds
+// the derived figures used for display.
 type PersonBalance struct {
 	PersonID         string `json:"personId"`
 	PaymentsReceived int64  `json:"paymentsReceived"`
