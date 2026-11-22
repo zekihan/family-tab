@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 	"github.com/zekihan/family-tab/internal/ledger"
 	"github.com/zekihan/family-tab/internal/protocol"
 	"github.com/zekihan/family-tab/internal/store"
+)
+
+var backupTimestamp = regexp.MustCompile(
+	`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|\+00:00)$`,
 )
 
 func (svc *Service) Restore(
@@ -116,6 +121,15 @@ func restoreRecords(req *protocol.RestoreRequest, now time.Time) (*ledger.Record
 		return nil, "Backup currency must be TRY."
 	}
 
+	if !validBackupTimestamp(backup.ExportedAt) {
+		return nil, "Backup exportedAt must be an RFC 3339 UTC timestamp."
+	}
+
+	err := validateUnapplied(backup.Unapplied)
+	if err != nil {
+		return nil, err.Error()
+	}
+
 	today, err := todayInZone(backup.TimeZone, now)
 	if err != nil {
 		return nil, err.Error()
@@ -145,6 +159,112 @@ func restoreRecords(req *protocol.RestoreRequest, now time.Time) (*ledger.Record
 	}
 
 	return records, ""
+}
+
+func validateUnapplied(rows []protocol.UnappliedOperation) error {
+	const maxSafeInteger = 1<<53 - 1
+
+	orderByID := make(map[string]int, len(rows))
+	for index := range rows {
+		row := &rows[index]
+		if row.Order < 0 || int64(row.Order) > maxSafeInteger {
+			return fmt.Errorf(
+				"%w: unapplied operation %d has an invalid order",
+				errPayload,
+				index+1,
+			)
+		}
+
+		if _, exists := orderByID[row.Op.ID]; exists {
+			return fmt.Errorf("%w: duplicate unapplied operation ID %q", errPayload, row.Op.ID)
+		}
+
+		orderByID[row.Op.ID] = row.Order
+	}
+
+	for index := range rows {
+		row := &rows[index]
+
+		err := validateUnappliedDependencies(row, orderByID)
+		if err == nil {
+			err = validateUnappliedOperation(&row.Op)
+		}
+
+		if err != nil {
+			return fmt.Errorf("unapplied operation %d: %w", index+1, err)
+		}
+	}
+
+	return nil
+}
+
+func validateUnappliedDependencies(
+	row *protocol.UnappliedOperation,
+	orderByID map[string]int,
+) error {
+	if row.Dependencies == nil {
+		return fmt.Errorf("%w: dependencies must be an array", errPayload)
+	}
+
+	for _, id := range row.Dependencies {
+		order, found := orderByID[id]
+		if !found || order >= row.Order {
+			return fmt.Errorf(
+				"%w: dependency %q must reference an earlier unapplied operation",
+				errPayload,
+				id,
+			)
+		}
+	}
+
+	return nil
+}
+
+func validateUnappliedOperation(op *protocol.Operation) error {
+	rule := validateOperation(op)
+	if rule != nil {
+		return fmt.Errorf("%w: %s", errPayload, rule.Reason)
+	}
+
+	if op.Generation == "" || !validBackupTimestamp(op.CreatedAt) {
+		return fmt.Errorf("%w: expected a generation and an RFC 3339 UTC createdAt", errPayload)
+	}
+
+	if (op.Kind == ledger.KindUpdate || op.Kind == ledger.KindDelete) &&
+		(op.BaseVersion == nil || *op.BaseVersion == "") {
+		return fmt.Errorf("%w: an update or delete needs a baseVersion", errPayload)
+	}
+
+	return validateUnappliedPayload(op)
+}
+
+func validateUnappliedPayload(op *protocol.Operation) error {
+	switch op.RecordType {
+	case ledger.TypeSettings:
+		return validateBackupPayload[ledger.Settings](op)
+	case ledger.TypePerson:
+		return validateBackupPayload[ledger.Person](op)
+	case ledger.TypePurchase:
+		return validateBackupPayload[ledger.Purchase](op)
+	case ledger.TypePayment:
+		return validateBackupPayload[ledger.Payment](op)
+	case ledger.TypeRefund:
+		return validateBackupPayload[ledger.Refund](op)
+	case ledger.TypePayout:
+		return validateBackupPayload[ledger.Payout](op)
+	default:
+		return fmt.Errorf("%w: unknown record type %q", errPayload, op.RecordType)
+	}
+}
+
+func validBackupTimestamp(value string) bool {
+	if !backupTimestamp.MatchString(value) {
+		return false
+	}
+
+	stamp, err := time.Parse(time.RFC3339, value)
+
+	return err == nil && stamp.Year() > 0
 }
 
 func stampBackupVersions(records *ledger.Records, version string) bool {

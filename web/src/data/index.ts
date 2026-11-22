@@ -9,7 +9,7 @@ import type {
   BackupFile, LedgerRecord, Me, Operation, Receipt, RecordByType, Records, RecordType, RestoreRequest, Snapshot,
 } from "../types.ts";
 import { AuthError, createApi, NetworkError, ServerError } from "./api.ts";
-import { backupRecords, countRecords, parseBackup } from "./backup.ts";
+import { backupRecords, countRecords, parseBackup, reviewOperation, reviewRecord, validPatch } from "./backup.ts";
 import { changeLocal, draft, finishLogout, LocalStateError, openLedger, purge, readLocal } from "./db.ts";
 import type { LedgerDB, LocalState } from "./db.ts";
 import { withSyncLock } from "./lock.ts";
@@ -115,6 +115,11 @@ function noVersion(record: LedgerRecord) {
   return value;
 }
 
+function changedFields(current: LedgerRecord, fields: Record<string, unknown>) {
+  const existing = { ...current } as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(fields).filter(([key, value]) => existing[key] !== value));
+}
+
 function reviewServer(snapshot: Snapshot | undefined, row: Extract<QueueEntry, { state: "needsReview" }>) {
   const { op, receipt } = row;
   if (receipt?.status === "conflict" &&
@@ -195,12 +200,13 @@ export function createStore(options: StoreOptions = {}) {
     const records = state.snapshot ? view.records : emptyRecords;
     const reviewItems = state.queue.flatMap(row => {
       if (row.state !== "needsReview") return [];
-      const op = row.op;
+      const op = row.restore ? reviewOperation(row.op) : row.op;
       const blockingIds = row.receipt?.blocking ?? row.ruleError?.blocking ?? [];
       const all = state.snapshot ?? emptyRecords;
       return [{
         op, reason: row.reason, code: row.receipt?.code ?? row.ruleError?.code ?? null, restore: !!row.restore,
-        local: row.local, server: reviewServer(state.snapshot, row), blockingIds,
+        local: row.restore ? reviewRecord(op.recordType, row.local) : row.local,
+        server: reviewServer(state.snapshot, row), blockingIds,
         generation: state.snapshot?.generation,
         blocking: [all.settings, ...all.people, ...all.purchases, ...all.payments, ...all.refunds, ...all.payouts]
           .filter((record): record is LedgerRecord => !!record && blockingIds.includes(record.id)),
@@ -216,7 +222,8 @@ export function createStore(options: StoreOptions = {}) {
             }
           }
           return false;
-        }).map(candidate => candidate.op),
+        }).map(candidate => candidate.state === "needsReview" && candidate.restore
+          ? reviewOperation(candidate.op) : candidate.op),
       }];
     });
     const pendingUndo = state.queue.flatMap(row => row.state === "pendingUndo" && row.deadline > time
@@ -290,10 +297,11 @@ export function createStore(options: StoreOptions = {}) {
     }
   }
 
-  async function releaseRestore(currentEpoch: string | undefined, recover: boolean) {
+  async function releaseRestore(currentEpoch: string | undefined, recover: boolean, signIn = false) {
     await changeLocal(requireDB(), currentEpoch, state => {
       if (recover && state.meta.restore?.attempted) state.meta.restore.active = false;
       else delete state.meta.restore;
+      if (signIn) state.meta.needsSignIn = true;
     }, { duringRestore: true });
     announce("restoreEnd");
   }
@@ -540,10 +548,8 @@ export function createStore(options: StoreOptions = {}) {
         return { status: "stale", generation, current };
       }
       const base = { ...newOperation(generation, type, id), baseVersion: opened.version };
-      const fields = current as unknown as Record<string, unknown>;
       const op: Operation = patch
-        ? { ...base, kind: "update", patch: patchFields(type,
-          Object.fromEntries(Object.entries(patch).filter(([key, value]) => fields[key] !== value))) }
+        ? { ...base, kind: "update", patch: patchFields(type, changedFields(current, patch)) }
         : { ...base, kind: "delete", preImage: current };
       return enqueue(state, op, before);
     });
@@ -621,6 +627,11 @@ export function createStore(options: StoreOptions = {}) {
       if (action === "confirmAlreadyReturned" && (original.recordType !== "payout" || original.kind === "delete")) {
         return invalid("Only a payout can be confirmed as money already returned.");
       }
+      const keep = action === "keepLocal" ? reviewed.local : null;
+      if (row.restore && !keep && !edited && original.kind === "update" &&
+          !validPatch(original.recordType, original.patch)) {
+        return invalid("Edit and resubmit this backup change before applying it.");
+      }
       const before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), now()).records;
       const base = {
         ...newOperation(generation, original.recordType, original.recordId),
@@ -634,12 +645,14 @@ export function createStore(options: StoreOptions = {}) {
         }
         op = { ...base, kind: "delete", baseVersion: current.version, preImage: current };
       } else if (!current) {
-        const payload = original.kind === "create" ? original.record : row.local && noVersion(row.local);
+        const local = keep ?? (row.restore ? reviewed.local : row.local);
+        const payload = local ? noVersion(local) : original.kind === "create" ? original.record : null;
         if (!payload && !edited) return invalid("Enter the full replacement record before resubmitting.");
         const record = { ...payload, ...edited, id: original.recordId } as LedgerRecord;
         op = { ...base, kind: "create", record: noVersion(record) };
       } else {
-        const fields = edited ?? (original.kind === "update" ? original.patch : original.record);
+        const fields = keep ? changedFields(current, noVersion(keep)) :
+          edited ?? (original.kind === "update" ? original.patch : original.record);
         op = { ...base, kind: "update", baseVersion: current.version, patch: patchFields(original.recordType, fields) };
       }
       const result = enqueue(state, op, before, row.order, row.dependencies);
@@ -727,8 +740,8 @@ export function createStore(options: StoreOptions = {}) {
         if (state.meta.restore) state.meta.restore.attempted = true;
       }, { duringRestore: true });
       const restored = await api.restore(request).catch(error => {
-        rejected = (generation !== undefined && error instanceof AuthError) ||
-          (error instanceof ServerError && error.status === 413);
+        rejected = error instanceof ServerError && error.status >= 400 && error.status < 500 &&
+          error.status !== 401;
         throw error;
       });
       if (restored.status === "rejected") {
@@ -741,11 +754,9 @@ export function createStore(options: StoreOptions = {}) {
     } catch (error) {
       const state = await readLocal(requireDB());
       assertSession(state, currentEpoch);
-      await releaseRestore(currentEpoch, !rejected);
-      if (error instanceof AuthError) {
-        needsSignIn = true;
-        await changeLocal(requireDB(), currentEpoch, local => { local.meta.needsSignIn = true; });
-      }
+      const signIn = error instanceof AuthError;
+      if (signIn) needsSignIn = true;
+      await releaseRestore(currentEpoch, !rejected, signIn);
       lastError = message(error);
       throw error;
     } finally {

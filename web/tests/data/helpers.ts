@@ -3,17 +3,17 @@ import { createStore } from "../../src/data/index.ts";
 import { applyOperation, emptyRecords } from "../../src/data/model.ts";
 import type { BackupFile, Person, Purchase, Refund, Payment, Snapshot, Receipt, Operation, OpResult, RestoreRequest } from "../../src/types.ts";
 
-export const person: Person = { id: "a", version: "initial-a", name: "A", archived: false, payday: null };
-export const other: Person = { ...person, id: "b", version: "initial-b", name: "B" };
+export const person: Person = { id: "00000000-0000-4000-8000-000000000001", version: "initial-a", name: "A", archived: false, payday: null };
+export const other: Person = { ...person, id: "00000000-0000-4000-8000-000000000002", version: "initial-b", name: "B" };
 export const purchase: Purchase = {
-  id: "purchase", version: "initial-purchase", personId: person.id, item: "Item", totalMinor: 100,
+  id: "00000000-0000-4000-8000-000000000003", version: "initial-purchase", personId: person.id, item: "Item", totalMinor: 100,
   boughtOn: "2026-11-22", plan: "once", dueDate: null, count: null, firstDue: null, dueDay: null, note: null,
 };
 export const refund: Refund = {
-  id: "refund", version: "initial-refund", purchaseId: purchase.id,
+  id: "00000000-0000-4000-8000-000000000004", version: "initial-refund", purchaseId: purchase.id,
   amountMinor: 10, refundedOn: "2026-11-22", note: null,
 };
-export const payment = (personId = "a"): Omit<Payment, "id" | "version"> => ({
+export const payment = (personId = person.id): Omit<Payment, "id" | "version"> => ({
   personId, amountMinor: 100, paidOn: "2026-11-22", note: null,
 });
 export function initial(): Snapshot {

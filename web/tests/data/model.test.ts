@@ -3,11 +3,11 @@ import test from "node:test";
 import { affectedPeople, applyOperation, reflects, replay } from "../../src/data/model.ts";
 import type { QueueEntry } from "../../src/data/model.ts";
 import type { Operation } from "../../src/types.ts";
-import { initial, payment, person, purchase, refund } from "./helpers.ts";
+import { initial, other, payment, person, purchase, refund } from "./helpers.ts";
 
 const common = { generation: initial().generation, createdAt: "2026-11-22T00:00:00Z" };
 const move: Operation = { ...common, id: "move", recordId: purchase.id, recordType: "purchase", kind: "update",
-  baseVersion: purchase.version, patch: { personId: "b", note: null } };
+  baseVersion: purchase.version, patch: { personId: other.id, note: null } };
 const removeRefund: Operation = { ...common, id: "remove-refund", recordId: refund.id, recordType: "refund",
   kind: "delete", baseVersion: refund.version, preImage: refund };
 
@@ -23,7 +23,7 @@ test("applyOperation changes only patchable fields and uses the operation ID as 
     recordType: "payment", record: { id: "payment", ...payment() } });
   assert.deepEqual(created.payments, [{ ...payment(), id: "payment", version: "create" }]);
   const moved = applyOperation(created, { ...move, patch: { ...move.patch, id: "wrong", version: "wrong" } });
-  assert.deepEqual(moved.purchases, [{ ...purchase, personId: "b", version: move.id }]);
+  assert.deepEqual(moved.purchases, [{ ...purchase, personId: other.id, version: move.id }]);
   assert.equal(moved.refunds[0].purchaseId, purchase.id);
   assert.equal(records.purchases[0].version, purchase.version);
   const patch = { ...common, id: "update-refund", recordType: "refund", recordId: refund.id,
@@ -35,7 +35,7 @@ test("applyOperation changes only patchable fields and uses the operation ID as 
 
 test("queue deps account for moves, refunds, person creates and independent settings", () => {
   const create: Operation = { ...common, id: "create-person", kind: "create",
-    recordType: "person", recordId: "b", record: { ...person, id: "b" } };
+    recordType: "person", recordId: other.id, record: { ...person, id: other.id } };
   const settings: Operation = { ...common, id: "settings", kind: "update",
     recordType: "settings", recordId: "ledger", baseVersion: "setup", patch: { timeZone: "Europe/Istanbul" } };
   const queue = [row(1, create), row(2, move), row(3, removeRefund), row(4, settings)];
@@ -45,7 +45,7 @@ test("queue deps account for moves, refunds, person creates and independent sett
   const view = replay(initial(), queue, 10);
   assert.deepEqual(view.excluded.map(item => item.op.id), [move.id, removeRefund.id]);
   assert.equal(view.records.refunds.length, 1);
-  assert.equal(view.records.purchases[0].personId, "a");
+  assert.equal(view.records.purchases[0].personId, person.id);
   assert.deepEqual(view.items.map(item => item.op.id), [create.id, settings.id]);
 });
 

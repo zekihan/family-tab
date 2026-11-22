@@ -170,6 +170,46 @@ func restoreRequest() *protocol.RestoreRequest {
 	return req
 }
 
+func TestRestoreRejectsMalformedUnappliedOps(t *testing.T) {
+	t.Parallel()
+
+	svc, _, generation := newLedger(t)
+	apply(t, svc, item(createOp(generation, ledger.TypePerson, personID, personPayload)))
+	before := snapshot(t, svc)
+	req := restoreRequest()
+	req.ExpectedRevision = before.Revision
+	op := newOperation(generation, ledger.TypePayment, uuid.NewString(), ledger.KindUpdate)
+	op.BaseVersion = new(uuid.NewString())
+	op.Patch = json.RawMessage(`{"paidOn":123}`)
+	req.Backup.Unapplied = []protocol.UnappliedOperation{
+		{Op: *op, Dependencies: []string{}, Order: 0, Reason: nil},
+	}
+
+	result := restoreOK(t, svc, req)
+	if result.Status != protocol.StatusRejected || result.Code == nil ||
+		*result.Code != ledger.CodeInvalid || result.Reason == nil {
+		t.Fatalf("malformed unapplied operation accepted: %+v", result)
+	}
+
+	if got := snapshot(t, svc); !reflect.DeepEqual(got, before) {
+		t.Fatalf("malformed unapplied operation changed the ledger: %+v", got)
+	}
+
+	req.Backup.Unapplied[0].Op.Patch = json.RawMessage(`{"paidOn":"2025-01-01","note":null}`)
+	req.Backup.Unapplied[0].Dependencies = []string{op.ID}
+
+	result = restoreOK(t, svc, req)
+	if result.Status != protocol.StatusRejected || result.Code == nil ||
+		*result.Code != ledger.CodeInvalid {
+		t.Fatalf("self-referencing unapplied dependency accepted: %+v", result)
+	}
+
+	req.Backup.Unapplied[0].Dependencies = []string{}
+	if result = restoreOK(t, svc, req); result.Status != protocol.StatusApplied {
+		t.Fatalf("valid held patch against an absent payment rejected: %+v", result)
+	}
+}
+
 func TestRestoreRejectsBackupWithMissingCollections(t *testing.T) {
 	t.Parallel()
 

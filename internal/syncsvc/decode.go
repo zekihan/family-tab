@@ -19,18 +19,15 @@ func decodeChange[T any](
 	existing *T,
 	op *protocol.Operation,
 ) (*T, json.RawMessage, *ledger.RuleError) {
-	var (
-		fields  recordFields
-		current json.RawMessage
-		err     error
-	)
+	var fields recordFields
 
-	switch op.Kind {
-	case ledger.KindCreate:
-		fields, err = decodeCreate(new(T), op)
-	case ledger.KindUpdate, ledger.KindDelete:
-		current, fields, err = encodeRecord(existing)
-		if err == nil && (existing == nil || !matchesVersion(fields, op.BaseVersion)) {
+	if op.Kind == ledger.KindUpdate || op.Kind == ledger.KindDelete {
+		current, shape, err := encodeRecord(existing)
+		if err != nil {
+			return nil, nil, invalid(err.Error())
+		}
+
+		if existing == nil || !matchesVersion(shape, op.BaseVersion) {
 			return nil, current, &ledger.RuleError{
 				Blocking: nil,
 				Code:     ledger.CodeConflict,
@@ -38,35 +35,63 @@ func decodeChange[T any](
 			}
 		}
 
-		if err == nil {
-			err = decodeEdit[T](op, fields)
-		}
-	default:
-		err = fmt.Errorf("%w: unknown operation kind", errPayload)
+		fields = shape
 	}
 
-	if err != nil {
-		return nil, nil, invalid(err.Error())
-	}
-
-	if op.Kind == ledger.KindDelete {
-		return nil, nil, nil
-	}
-
-	record := new(T)
-	fields["version"] = json.RawMessage(`"` + op.ID + `"`)
-
-	raw, err := json.Marshal(fields)
-	if err != nil {
-		return nil, nil, invalid(err.Error())
-	}
-
-	err = jsonv2.Unmarshal(raw, record, jsonv2.RejectUnknownMembers(true))
+	record, err := decodePayload[T](op, fields)
 	if err != nil {
 		return nil, nil, invalid(err.Error())
 	}
 
 	return record, nil, nil
+}
+
+// decodePayload validates the operation against the record shape. For a backup
+// there is no base record to check, so edits use the zero value for that shape.
+func decodePayload[T any](op *protocol.Operation, fields recordFields) (*T, error) {
+	record := new(T)
+
+	var err error
+
+	switch op.Kind {
+	case ledger.KindCreate:
+		fields, err = decodeCreate(record, op)
+	case ledger.KindUpdate, ledger.KindDelete:
+		if fields == nil {
+			_, fields, err = encodeRecord(record)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		err = decodeEdit[T](op, fields)
+	default:
+		err = fmt.Errorf("%w: unknown operation kind", errPayload)
+	}
+
+	if err != nil || op.Kind == ledger.KindDelete {
+		return nil, err
+	}
+
+	fields["version"] = json.RawMessage(`"` + op.ID + `"`)
+
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("encode operation payload: %w", err)
+	}
+
+	err = jsonv2.Unmarshal(raw, record, jsonv2.RejectUnknownMembers(true))
+	if err != nil {
+		return nil, fmt.Errorf("decode operation payload: %w", err)
+	}
+
+	return record, nil
+}
+
+func validateBackupPayload[T any](op *protocol.Operation) error {
+	_, err := decodePayload[T](op, nil)
+
+	return err
 }
 
 func encodeRecord(record any) (json.RawMessage, recordFields, error) {
