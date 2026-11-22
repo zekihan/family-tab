@@ -44,6 +44,12 @@ test("amount formatting uses TRY groups and displays only nonzero fractions", ()
   assert.equal(formatAmountInput(1_234_950), "12.349,50");
   assert.equal(formatAmountInput(200_000), "2.000");
   assert.equal(formatTRY(150_000), "1.500 TL");
+  assert.equal(formatAmountInput(129_990), "1.299,90");
+  assert.equal(formatAmountInput(-129_990), "-1.299,90");
+  assert.deepEqual(parseAmount("1.299,90"), { ok: true, minor: 129_990 });
+  assert.equal(parseAmount("-1.299,90").ok, false);
+  assert.equal(parseAmount("100.000.000,01").ok, false);
+  assert.equal(parseAmount("1 299,90").ok, false);
 });
 
 test("purchase date shortcuts use today and include today's payday", () => {

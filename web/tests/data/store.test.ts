@@ -766,6 +766,22 @@ test("a backup re-export preserves an IANA alias and can be previewed", async ()
   await assert.rejects(store.previewRestore({ ...exported, timeZone: "us/eastern" }), /Invalid ledger time zone/);
 });
 
+test("restore preview rejects a backup whose records do not agree", async () => {
+  const { store, server } = harness({ rules: ledger });
+  await store.start();
+  const before = server.calls.length;
+  const overRefunded = backup();
+  overRefunded.refunds = [{ ...overRefunded.refunds[0], amountMinor: overRefunded.purchases[0].totalMinor + 1 }];
+  await assert.rejects(store.previewRestore(overRefunded), /Refunds exceed the purchase total/);
+  const missingPerson = backup();
+  missingPerson.payments = [{
+    id: "00000000-0000-4000-8000-000000000099", version: "pay",
+    ...payment("00000000-0000-4000-8000-0000000000ff"),
+  }];
+  await assert.rejects(store.previewRestore(missingPerson), /Person not found/);
+  assert.equal(server.calls.length, before);
+});
+
 test("review resubmission queues the new person before the purchase and retains later dependencies", async () => {
   const { store, server, clock, dbName } = harness({ rules: ledger });
   await store.start();

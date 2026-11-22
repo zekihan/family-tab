@@ -35,6 +35,8 @@ test("parseBackup accepts exact operation payloads and earlier dependencies", ()
 
 test("parseBackup rejects unknown fields at every backup level", () => {
   assert.throws(() => parseBackup({ ...backup(), extra: 1 }), /invalid.*backup/i);
+  const { people: _people, ...withoutPeople } = backup();
+  assert.throws(() => parseBackup(withoutPeople), /people/i);
   assert.throws(() => parseBackup({ ...backup(), people: [{ ...person, extra: 1 }] }), /people/i);
   const { aliases: _aliases, ...withoutAliases } = person;
   assert.throws(() => parseBackup({ ...backup(), people: [withoutAliases] }), /people/i);
