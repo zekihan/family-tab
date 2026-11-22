@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
-import { computeLedger, parseAmount, paymentChips, validateChange, validateRecords } from "../../src/ledger/index.ts";
+import {
+  computeLedger, defaultInstallmentStart, dueShortcuts, parseAmount, paymentChips, validateChange, validateRecords,
+} from "../../src/ledger/index.ts";
 import type { PurchaseView } from "../../src/ledger/index.ts";
 import type {
   ComingUpEntry, HomeTotals, Operation, PaymentChip, PersonBalance, ReceiptCode, Records, ScheduledAmount, StatusChip,
@@ -151,6 +153,20 @@ for (const { input, minor } of readJSON<{ input: string; minor: number | null }[
   test(`amounts.json — ${JSON.stringify(input)}`, () => {
     const result = parseAmount(input);
     assert.equal(result.ok ? result.minor : null, minor);
+  });
+}
+
+const defaultsFixtures = readJSON<{
+  today: string;
+  payday: number | null;
+  shortcuts: ReturnType<typeof dueShortcuts>;
+  installmentStart: ReturnType<typeof defaultInstallmentStart>;
+}[]>("defaults.json");
+assert.ok(defaultsFixtures.length >= 15);
+for (const { today, payday, shortcuts, installmentStart } of defaultsFixtures) {
+  test(`defaults.json — ${today} payday ${payday}`, () => {
+    assert.deepEqual(dueShortcuts(today, payday), shortcuts);
+    assert.deepEqual(defaultInstallmentStart(today, payday), installmentStart);
   });
 }
 
