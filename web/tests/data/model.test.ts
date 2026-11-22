@@ -22,7 +22,8 @@ test("applyOperation changes only patchable fields and uses the operation ID as 
   const created = applyOperation(records, { ...common, kind: "create", id: "create", recordId: "payment",
     recordType: "payment", record: { id: "payment", ...payment() } });
   assert.deepEqual(created.payments, [{ ...payment(), id: "payment", version: "create" }]);
-  const moved = applyOperation(created, { ...move, patch: { ...move.patch, id: "wrong", version: "wrong" } });
+  const illegalPatch = { ...move.patch, id: "wrong", version: "wrong" };
+  const moved = applyOperation(created, { ...move, patch: illegalPatch });
   assert.deepEqual(moved.purchases, [{ ...purchase, personId: other.id, version: move.id }]);
   assert.equal(moved.refunds[0].purchaseId, purchase.id);
   assert.equal(records.purchases[0].version, purchase.version);
@@ -34,11 +35,13 @@ test("applyOperation changes only patchable fields and uses the operation ID as 
 });
 
 test("only a complete matching create record is reflected", () => {
-  const create: Operation = { ...common, kind: "create", id: "create", recordId: person.id,
-    recordType: "person", record: { id: person.id } };
+  const create = { ...common, kind: "create", id: "create", recordId: person.id,
+    recordType: "person", record: { id: person.id } } as Operation;
   const { version: _version, ...record } = person;
+  const complete: Operation = { ...common, kind: "create", id: "create", recordId: person.id,
+    recordType: "person", record };
   assert.equal(reflects(initial(), create), false);
-  assert.equal(reflects(initial(), { ...create, record }), true);
+  assert.equal(reflects(initial(), complete), true);
 });
 
 test("a created purchase, payment or refund gets source app locally and aliases compare by value", () => {
@@ -48,8 +51,9 @@ test("a created purchase, payment or refund gets source app locally and aliases 
   const { source: _source, ...record } = { ...payment(), id: "payment" };
   const create: Operation = { ...common, kind: "create", id: "create", recordId: "payment", recordType: "payment", record };
   assert.equal(reflects({ ...created, payments: [{ ...record, source: "agent", version: "create" }] }, create), true);
+  const aliasPatch = { aliases: ["Anne", "Annem"], source: "agent" };
   const aliases: Operation = { ...common, kind: "update", id: "aliases", recordId: person.id, recordType: "person",
-    baseVersion: person.version, patch: { aliases: ["Anne", "Annem"], source: "agent" } };
+    baseVersion: person.version, patch: aliasPatch };
   const updated = applyOperation(initial(), aliases);
   assert.deepEqual(updated.people.find(row => row.id === person.id)?.aliases, ["Anne", "Annem"]);
   assert.equal("source" in updated.people.find(row => row.id === person.id)!, false);

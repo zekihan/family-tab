@@ -132,7 +132,7 @@ test("applied ops clear; rejection and conflict block their dependents while unr
   const { store, clock, server } = harness();
   await store.start();
   clock.online = false;
-  server.result.decide = op => op.kind === "update" && (op.patch.item === "Local")
+  server.result.decide = op => op.kind === "update" && "item" in op.patch && op.patch.item === "Local"
     ? { status: "conflict", code: "conflict", current: { ...purchase, item: "Server", version: "server-edit" }, reason: "Edited elsewhere" }
     : op.kind === "create" && op.recordType === "payout" && !op.alreadyReturned
       ? { status: "rejected", code: "payout_exceeds_credit", blocking: [purchase.id], reason: "Above credit" }
@@ -823,7 +823,7 @@ test("restore review update uses the restored record as a base", async () => {
 test("an imported settings create proposes its own time zone against restored settings", async () => {
   const { store, server } = harness({ rules: ledger });
   await store.start();
-  const record = { id: "ledger", currency: "TRY", timeZone: "Europe/Istanbul" };
+  const record = { id: "ledger" as const, currency: "TRY" as const, timeZone: "Europe/Istanbul" };
   const create: Operation = { id: crypto.randomUUID(), generation: initial().generation,
     createdAt: "2026-11-22T00:00:00Z", recordType: "settings", recordId: "ledger", kind: "create", record };
   const matchingRecord = { ...record, timeZone: "UTC" };
@@ -928,10 +928,10 @@ test("restore preview rejects a malformed payment patch and legacy review data s
   const record = { ...payment(), id: crypto.randomUUID(), version: "initial-payment" };
   server.replace({ ...initial(), payments: [record] });
   await store.start();
-  const op: Operation = {
+  const op = {
     id: crypto.randomUUID(), generation: initial().generation, recordType: "payment", recordId: record.id,
     createdAt: "2026-11-22T00:00:00Z", kind: "update", baseVersion: record.version, patch: { paidOn: 123 },
-  };
+  } as unknown as Operation;
   const file = backup([{ order: 0, op, dependencies: [], reason: null }]);
   await assert.rejects(store.previewRestore(file), /unapplied operation 1.*patch/i);
   assert.equal(server.calls.some(call => call.path === "/api/restore"), false);
