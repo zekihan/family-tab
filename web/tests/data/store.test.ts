@@ -783,7 +783,7 @@ test("review resubmission queues the new person before the purchase and retains 
     state.queue.push({ op: later, state: "sendable", order: 2, people: [person.id], local: refund, dependencies: [held.op.id] });
   });
   clock.online = false;
-  const newPerson = { name: "New person", payday: null, archived: false };
+  const newPerson = { name: "New person", aliases: [], payday: null, archived: false };
   const invalid = await store.editAndResubmit(held.op.id, { totalMinor: 1 }, held, newPerson);
   assert.equal(invalid.status, "invalid");
   assert.deepEqual((await readLocal(db)).queue.map(row => row.op.id), [held.op.id, later.id]);

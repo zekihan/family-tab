@@ -1,0 +1,43 @@
+{
+  "name": "alias-conflict-create",
+  "description": "Contract A1: a new person's name matching another person's alias is alias_conflict",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "aliases": [
+          "Annem"
+        ],
+        "version": "v1"
+      }
+    ],
+    "purchases": [],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "op": {
+    "id": "op-1",
+    "generation": "g1",
+    "createdAt": "2025-11-22T12:00:00Z",
+    "recordType": "person",
+    "recordId": "new",
+    "kind": "create",
+    "record": {
+      "id": "new",
+      "name": "ANNEM",
+      "payday": null,
+      "archived": false,
+      "aliases": []
+    }
+  },
+  "expect": {
+    "status": "rejected",
+    "code": "alias_conflict"
+  }
+}

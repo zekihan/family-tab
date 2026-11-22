@@ -144,7 +144,8 @@ func View(records *Records, today string) *LedgerView {
 
 	var upcoming []upcomingEntry
 
-	for _, person := range records.People {
+	for i := range records.People {
+		person := &records.People[i]
 		entries := personEntries(view, purchasesByPerson[person.ID], refunds)
 		slices.SortStableFunc(entries, compareViewEntries)
 
@@ -263,7 +264,7 @@ func personEntries(
 }
 
 func allocateEntry(
-	balance *BalanceView, entry viewEntry, person Person, today, windowEnd string,
+	balance *BalanceView, entry viewEntry, person *Person, today, windowEnd string,
 ) *ComingUpEntry {
 	amount, purchase := entry.entry.amount, entry.purchase
 	paid := min(balance.Credit, amount.AdjustedMinor)

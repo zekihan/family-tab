@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isValidTimeZone, validateChange, validateRecords } from "../../src/ledger/index.ts";
+import { isValidTimeZone, trimName, validateChange, validateRecords } from "../../src/ledger/index.ts";
 import type { Change } from "../../src/ledger/index.ts";
 import type { Payout, Records } from "../../src/types.ts";
 import { ledger, payment, person, purchase, refund, settings, today } from "./records.ts";
@@ -158,4 +158,26 @@ test("payout checks use destination credit without the candidate payout", () => 
   const insufficient = { ...withPayout, payments: [{ ...payment, amountMinor: 100 }] };
   const decreasing = { ...insufficient, payouts: [...before.payouts, { ...atCredit, amountMinor: 350 }] };
   assert.equal(validateChange(insufficient, decreasing, updatePayout, today), null);
+});
+
+test("aliases are trimmed, bounded, distinct from the name and unique across people", () => {
+  const aunt = { ...person, id: "aunt", name: "Ayşe", aliases: [] };
+  const gran = { ...person, id: "gran", name: "Gran", aliases: ["Babaanne"], archived: true };
+  const before = ledger({ people: [person, aunt, gran] });
+  const update: Change = { kind: "update", recordType: "person", recordId: "aunt" };
+  const withAliases = (aliases: string[], name = aunt.name) =>
+    ledger({ people: [person, { ...aunt, name, aliases }, gran] });
+
+  assert.equal(validateChange(before, withAliases(["Teyze", "Ş".repeat(40)]), update, today), null);
+  for (const aliases of [[""], [" Teyze"], ["Ş".repeat(41)], ["Teyze", "TEYZE"], ["AYSE"],
+    Array.from({ length: 21 }, (_, i) => `Ad ${i}`)]) {
+    assert.equal(validateChange(before, withAliases(aliases), update, today)?.code, "invalid", JSON.stringify(aliases));
+  }
+  assert.deepEqual(validateChange(before, withAliases(["BABAANNE", "mom"]), update, today), {
+    code: "alias_conflict", reason: "A name or alias matches another person.", blocking: ["gran", "mom"],
+  });
+  assert.equal(validateChange(before, withAliases([], "babaanne"), update, today)?.code, "alias_conflict");
+  assert.equal(validateChange(before, withAliases([], "Mom"), update, today), null);
+  assert.equal(validateRecords(withAliases(["Babaanne"]), today)?.code, "alias_conflict");
+  assert.equal(trimName("\u00A0Büyük\t\n  Anne\uFEFF"), "Büyük Anne");
 });

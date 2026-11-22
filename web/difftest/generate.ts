@@ -76,7 +76,7 @@ function changesFor(random: Random, records: LedgerCase["records"], today: strin
     recordId,
   });
   const create = (recordType: RecordType, row: LedgerRecord, alreadyReturned?: boolean): Operation => {
-    const { version: _version, ...record } = row;
+    const { version: _version, source: _source, ...record } = row as LedgerRecord & { source?: string };
     return { ...base("create", recordType, row.id), kind: "create", record, alreadyReturned };
   };
   const update = (recordType: RecordType, row: LedgerRecord, patch: Record<string, unknown>): Operation => ({
@@ -98,6 +98,9 @@ function changesFor(random: Random, records: LedgerCase["records"], today: strin
       amountMinor: random.pick([1, 100_001]),
     }, random.int(0, 4) === 0),
     update("person", person, { payday: random.pick([null, 1, 31, 32]), archived: !person.archived }),
+    update("person", person, {
+      aliases: random.pick([[], ["Anne"], ["anne", "ANNE"], ["KİŞİ 0"], [" Anne"], Array.from({ length: 21 }, (_, i) => `Ad ${i}`)]),
+    }),
     update("purchase", purchase, random.pick([
       { personId: person.id },
       { boughtOn: addDays(today, 1) },
@@ -120,13 +123,14 @@ function generateCase(random: Random): LedgerCase {
   const timeZone = random.pick(["UTC", "Europe/Istanbul", "America/New_York", "Pacific/Auckland"]);
   const people: Records["people"] = Array.from({ length: random.int(2, 6) }, (_, i) => ({
     id: `person-${i}`, name: `Kişi ${i}`, version, archived: random.int(0, 3) === 0,
+    aliases: random.pick([[], [], [`Takma ${i}`], ["Anne"]]),
     payday: random.pick([null, 1, 15, 29, 30, 31]),
   }));
   const purchases: Purchase[] = Array.from({ length: random.int(2, 7) }, (_, i) => {
     const dueDay = random.pick([1, 15, 28, 29, 30, 31, 31]);
     const plan = i === 0 ? "once" : i === 1 ? "installments" : random.pick(["once", "installments"] as const);
     return {
-      id: `purchase-${i}`, personId: random.pick(people).id, item: `Ürün ${i}`, version, note: null,
+      id: `purchase-${i}`, personId: random.pick(people).id, item: `Ürün ${i}`, version, note: null, source: "app",
       totalMinor: random.pick([random.int(120, 30_000), 10_000_000_000]),
       boughtOn: addDays(endOfMonth, -random.int(31, 45)),
       plan,
@@ -143,7 +147,7 @@ function generateCase(random: Random): LedgerCase {
     const total = random.pick([random.int(1, purchase.totalMinor), purchase.totalMinor]);
     const first = random.pick([random.int(1, total), total]);
     const addRefund = (amountMinor: number) => refunds.push({
-      id: `refund-${refunds.length}`, purchaseId: purchase.id, amountMinor, version, note: null,
+      id: `refund-${refunds.length}`, purchaseId: purchase.id, amountMinor, version, note: null, source: "app",
       refundedOn: random.pick([purchase.boughtOn, addDays(today, -1), today]),
     });
     addRefund(first);
@@ -151,7 +155,7 @@ function generateCase(random: Random): LedgerCase {
   }
 
   const payments: Records["payments"] = Array.from({ length: random.int(1, 8) }, (_, i) => ({
-    id: `payment-${i}`, personId: random.pick(people).id, amountMinor: random.int(1, 45_000), version, note: "cash",
+    id: `payment-${i}`, personId: random.pick(people).id, amountMinor: random.int(1, 45_000), version, note: "cash", source: "app",
     paidOn: addDays(today, random.pick([-2, -1, 0, 0, ...(i === 0 ? [1] : [])])),
   }));
   const payouts: Records["payouts"] = Array.from({ length: random.int(1, 5) }, (_, i) => ({

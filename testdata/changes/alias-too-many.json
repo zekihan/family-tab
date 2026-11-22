@@ -1,0 +1,60 @@
+{
+  "name": "alias-too-many",
+  "description": "Contract A1: more than 20 aliases is invalid",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "aunt",
+        "name": "Ayşe",
+        "payday": null,
+        "archived": false,
+        "aliases": [],
+        "version": "v1"
+      }
+    ],
+    "purchases": [],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "op": {
+    "id": "op-1",
+    "generation": "g1",
+    "createdAt": "2025-11-22T12:00:00Z",
+    "recordType": "person",
+    "recordId": "aunt",
+    "kind": "update",
+    "baseVersion": "v1",
+    "patch": {
+      "aliases": [
+        "Alias 0",
+        "Alias 1",
+        "Alias 2",
+        "Alias 3",
+        "Alias 4",
+        "Alias 5",
+        "Alias 6",
+        "Alias 7",
+        "Alias 8",
+        "Alias 9",
+        "Alias 10",
+        "Alias 11",
+        "Alias 12",
+        "Alias 13",
+        "Alias 14",
+        "Alias 15",
+        "Alias 16",
+        "Alias 17",
+        "Alias 18",
+        "Alias 19",
+        "Alias 20"
+      ]
+    }
+  },
+  "expect": {
+    "status": "rejected",
+    "code": "invalid"
+  }
+}

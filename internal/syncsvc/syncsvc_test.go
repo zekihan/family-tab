@@ -3,6 +3,7 @@ package syncsvc
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 
 const (
 	personID        = "d89f2479-ba78-4e22-9be9-27e9102585fe"
-	personPayload   = `{"id":"` + personID + `","name":"Ada","payday":5,"archived":false}`
+	personPayload   = `{"id":"` + personID + `","name":"Ada","payday":5,"archived":false,"aliases":[]}`
 	settingsPayload = `{"id":"ledger","timeZone":"UTC","currency":"TRY"}`
 )
 
@@ -83,7 +84,7 @@ func snapshot(t *testing.T, svc *Service) *protocol.Snapshot {
 func apply(t *testing.T, svc *Service, items ...protocol.OpsItem) []protocol.OpResult {
 	t.Helper()
 
-	response, err := svc.Apply(t.Context(), &protocol.OpsRequest{Items: items})
+	response, err := svc.Apply(t.Context(), &protocol.OpsRequest{Items: items}, ledger.SourceApp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,11 +266,12 @@ func TestApplyConcurrent(t *testing.T) {
 		group.Go(func() {
 			id := uuid.NewString()
 			op := createOp(generation, ledger.TypePerson, id,
-				`{"id":"`+id+`","name":"Ada","payday":null,"archived":false}`)
+				`{"id":"`+id+`","name":"Ada","payday":null,"archived":false,"aliases":[]}`)
 
 			response, err := svc.Apply(
 				t.Context(),
 				&protocol.OpsRequest{Items: []protocol.OpsItem{item(op)}},
+				ledger.SourceApp,
 			)
 			if err != nil || response.Results[0].Status != protocol.StatusApplied {
 				t.Errorf("concurrent apply = %+v, error %v", response, err)
@@ -301,5 +303,96 @@ func TestApplyConcurrent(t *testing.T) {
 			len(got.People),
 			len(seen),
 		)
+	}
+}
+
+func TestApplyStampsSource(t *testing.T) {
+	t.Parallel()
+
+	svc, _, generation := newLedger(t)
+	apply(t, svc, item(createOp(generation, ledger.TypePerson, personID, personPayload)))
+
+	paymentID := uuid.NewString()
+	payment := `{"id":"` + paymentID + `","personId":"` + personID +
+		`","amountMinor":500,"paidOn":"2025-11-01","note":null}`
+	withSource := createOp(generation, ledger.TypePayment, paymentID,
+		payment[:len(payment)-1]+`,"source":"agent"}`)
+	assertResult(t, apply(t, svc, item(withSource))[0],
+		protocol.StatusRejected, ledger.CodeInvalid, 2)
+
+	create := createOp(generation, ledger.TypePayment, paymentID, payment)
+
+	response, err := svc.Apply(
+		t.Context(), &protocol.OpsRequest{Items: []protocol.OpsItem{item(create)}},
+		ledger.SourceAgent,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertResult(t, response.Results[0], protocol.StatusApplied, "", 3)
+
+	patch := newOperation(generation, ledger.TypePayment, paymentID, ledger.KindUpdate)
+	patch.BaseVersion = &create.ID
+	patch.Patch = json.RawMessage(`{"source":"app"}`)
+	assertResult(t, apply(t, svc, item(patch))[0], protocol.StatusRejected, ledger.CodeInvalid, 3)
+
+	edit := newOperation(generation, ledger.TypePayment, paymentID, ledger.KindUpdate)
+	edit.BaseVersion = &create.ID
+	edit.Patch = json.RawMessage(`{"amountMinor":400}`)
+	assertResult(t, apply(t, svc, item(edit))[0], protocol.StatusApplied, "", 4)
+
+	got := snapshot(t, svc)
+	if len(got.Payments) != 1 || got.Payments[0].Source != ledger.SourceAgent ||
+		got.Payments[0].AmountMinor != 400 {
+		t.Fatalf("payments = %+v", got.Payments)
+	}
+
+	_, err = svc.Apply(t.Context(), &protocol.OpsRequest{Items: nil}, "")
+	if err == nil {
+		t.Fatal("Apply accepted an empty source")
+	}
+}
+
+func TestApplyAliases(t *testing.T) {
+	t.Parallel()
+
+	svc, _, generation := newLedger(t)
+	create := createOp(generation, ledger.TypePerson, personID, personPayload)
+	apply(t, svc, item(create))
+
+	otherID := uuid.NewString()
+	other := createOp(generation, ledger.TypePerson, otherID, `{"id":"`+otherID+
+		`","name":"Zeynep","payday":null,"archived":true,"aliases":["Ada'nın kızı"]}`)
+	assertResult(t, apply(t, svc, item(other))[0], protocol.StatusApplied, "", 3)
+
+	patch := newOperation(generation, ledger.TypePerson, personID, ledger.KindUpdate)
+	patch.BaseVersion = &create.ID
+	patch.Patch = json.RawMessage(`{"aliases":["ZEYNEP"]}`)
+
+	result := apply(t, svc, item(patch))[0]
+	assertResult(t, result, protocol.StatusRejected, ledger.CodeAliasConflict, 3)
+
+	if !slices.Equal(result.Blocking, []string{otherID}) {
+		t.Fatalf("blocking = %v, want [%s]", result.Blocking, otherID)
+	}
+
+	for _, invalid := range []string{`{"aliases":null}`, `{"aliases":"Ana"}`, `{"aliases":[1]}`} {
+		bad := newOperation(generation, ledger.TypePerson, personID, ledger.KindUpdate)
+		bad.BaseVersion = &create.ID
+		bad.Patch = json.RawMessage(invalid)
+		assertResult(t, apply(t, svc, item(bad))[0], protocol.StatusRejected, ledger.CodeInvalid, 3)
+	}
+
+	update := newOperation(generation, ledger.TypePerson, personID, ledger.KindUpdate)
+	update.BaseVersion = &create.ID
+	update.Patch = json.RawMessage(`{"aliases":["Anne","Annem"]}`)
+	assertResult(t, apply(t, svc, item(update))[0], protocol.StatusApplied, "", 4)
+
+	got := snapshot(t, svc).People
+	if !slices.ContainsFunc(got, func(row ledger.Person) bool {
+		return row.ID == personID && slices.Equal(row.Aliases, []string{"Anne", "Annem"})
+	}) {
+		t.Fatalf("people = %+v", got)
 	}
 }

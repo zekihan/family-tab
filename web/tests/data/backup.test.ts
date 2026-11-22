@@ -4,7 +4,8 @@ import { parseBackup } from "../../src/data/backup.ts";
 import type { Operation } from "../../src/types.ts";
 import { backup, payment, person, refund } from "./helpers.ts";
 
-const cash = { ...payment(), id: "00000000-0000-4000-8000-000000000005" };
+const stored = { ...payment(), id: "00000000-0000-4000-8000-000000000005" };
+const { source: _source, ...cash } = stored;
 const create = {
   id: "00000000-0000-4000-8000-000000000006", generation: "before-restore",
   createdAt: "2026-11-22T12:00:00.123Z", kind: "create", recordType: "payment", recordId: cash.id, record: cash,
@@ -17,7 +18,7 @@ const update = {
 const remove = {
   id: "00000000-0000-4000-8000-000000000008", generation: create.generation,
   createdAt: create.createdAt, kind: "delete", recordType: "payment", recordId: cash.id,
-  baseVersion: update.id, preImage: { ...cash, amountMinor: 200, version: update.id },
+  baseVersion: update.id, preImage: { ...stored, amountMinor: 200, version: update.id },
 } satisfies Operation;
 const entry = { order: 0, dependencies: [], reason: null, op: create };
 
@@ -35,6 +36,11 @@ test("parseBackup accepts exact operation payloads and earlier dependencies", ()
 test("parseBackup rejects unknown fields at every backup level", () => {
   assert.throws(() => parseBackup({ ...backup(), extra: 1 }), /invalid.*backup/i);
   assert.throws(() => parseBackup({ ...backup(), people: [{ ...person, extra: 1 }] }), /people/i);
+  const { aliases: _aliases, ...withoutAliases } = person;
+  assert.throws(() => parseBackup({ ...backup(), people: [withoutAliases] }), /people/i);
+  const { source: _stored, ...unsourced } = refund;
+  assert.throws(() => parseBackup({ ...backup(), refunds: [unsourced] }), /refunds/i);
+  assert.throws(() => parseBackup({ ...backup(), refunds: [{ ...refund, source: "mcp" }] }), /refunds/i);
   for (const item of [
     { ...entry, extra: 1 },
     { ...entry, op: { ...create, extra: 1 } },
@@ -69,6 +75,12 @@ test("parseBackup rejects malformed unapplied operations and dependencies", () =
     [{ ...entry, op: { ...update, baseVersion: null } }, /baseVersion/],
     [{ ...entry, op: { ...remove, preImage: { ...remove.preImage, version: create.id } } }, /preImage/],
     [{ ...entry, op: { ...remove, preImage: { ...remove.preImage, paidOn: null } } }, /preImage/],
+    [{ ...entry, op: { ...create, record: stored } }, /record/],
+    [{ ...entry, op: { ...update, patch: { source: "agent" } } }, /patch/],
+    [{ ...entry, op: { ...remove, preImage: { ...cash, version: update.id } } }, /preImage/],
+    [{ ...entry, op: { ...remove, preImage: { ...remove.preImage, source: "mcp" } } }, /preImage/],
+    [{ ...entry, op: { ...update, recordType: "person", recordId: person.id, patch: { aliases: "Anne" } } }, /patch/],
+    [{ ...entry, op: { ...update, recordType: "person", recordId: person.id, patch: { aliases: [1] } } }, /patch/],
   ] as const;
   for (const [row, message] of invalid) {
     assert.throws(() => parseBackup({ ...backup(), unapplied: [row] }), message);

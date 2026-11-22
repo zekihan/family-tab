@@ -111,6 +111,13 @@ func validateRecords(records *Records, today string) *RuleError {
 		}
 	}
 
+	for i := range records.People {
+		err := validateAliasConflicts(records.People, &records.People[i])
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -169,7 +176,7 @@ func validatePerson(person *Person) *RuleError {
 		return rule(CodeInvalid, "payday must be between 1 and 31")
 	}
 
-	return nil
+	return validateAliases(person)
 }
 
 func validLabel(value string) bool {

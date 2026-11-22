@@ -6,12 +6,16 @@ package syncsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/zekihan/family-tab/internal/ledger"
 	"github.com/zekihan/family-tab/internal/protocol"
 	"github.com/zekihan/family-tab/internal/store"
 )
+
+var errSource = errors.New("unknown record source")
 
 type Service struct {
 	store *store.Store
@@ -96,10 +100,17 @@ func (svc *Service) Receipts(
 	return response, nil
 }
 
+// Apply commits the operations in order. Source is ledger.SourceApp or
+// ledger.SourceAgent and is stamped on created purchases, payments and refunds.
 func (svc *Service) Apply(
 	ctx context.Context,
 	req *protocol.OpsRequest,
+	source string,
 ) (*protocol.OpsResponse, error) {
+	if source != ledger.SourceApp && source != ledger.SourceAgent {
+		return nil, fmt.Errorf("%w: %q", errSource, source)
+	}
+
 	response := &protocol.OpsResponse{
 		Generation: "",
 		Results:    make([]protocol.OpResult, 0, len(req.Items)),
@@ -108,7 +119,7 @@ func (svc *Service) Apply(
 		item := &req.Items[index]
 
 		err := svc.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-			result, err := svc.applyItem(ctx, tx, item)
+			result, err := svc.applyItem(ctx, tx, item, source)
 			if err != nil {
 				return err
 			}
@@ -143,6 +154,7 @@ func (svc *Service) applyItem(
 	ctx context.Context,
 	tx *store.Tx,
 	item *protocol.OpsItem,
+	source string,
 ) (protocol.OpResult, error) {
 	op := &item.Op
 
@@ -196,7 +208,7 @@ func (svc *Service) applyItem(
 		}, nil
 	}
 
-	receipt, err := commitOperation(ctx, tx, op, meta, svc.now())
+	receipt, err := commitOperation(ctx, tx, op, meta, svc.now(), source)
 	if err != nil {
 		return protocol.OpResult{}, err
 	}

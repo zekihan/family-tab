@@ -18,14 +18,27 @@ export function findRecord<T extends RecordType>(records: Records, type: T, id: 
   return (record ?? null) as RecordByType[T] | null;
 }
 
+export function hasSource(type: RecordType): boolean {
+  return type === "purchase" || type === "payment" || type === "refund";
+}
+
+/** Field equality that compares alias lists by value. */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((value, index) => value === b[index]);
+  return a === b;
+}
+
 export function patchFields(type: RecordType, fields: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(fields).filter(([key, value]) =>
-    value !== undefined && key !== "id" && key !== "version" && !(type === "refund" && key === "purchaseId") &&
-    !(type === "settings" && key === "currency")));
+    value !== undefined && key !== "id" && key !== "version" && key !== "source" &&
+    !(type === "refund" && key === "purchaseId") && !(type === "settings" && key === "currency")));
 }
 
 export function proposedRecord(current: LedgerRecord | null, op: Operation): LedgerRecord | null {
-  if (op.kind === "create") return { ...op.record, id: op.recordId, version: op.id } as LedgerRecord;
+  if (op.kind === "create") {
+    const source = hasSource(op.recordType) ? { source: "app" } : {};
+    return { ...op.record, ...source, id: op.recordId, version: op.id } as LedgerRecord;
+  }
   if (op.kind === "update" && current) {
     return { ...current, ...patchFields(op.recordType, op.patch), version: op.id };
   }
@@ -157,11 +170,12 @@ export function reflects(records: Records, op: Operation): boolean {
   const record = findRecord(records, op.recordType, op.recordId);
   if (op.kind === "delete") return record === null;
   if (!record) return false;
-  const { version: _version, ...content } = record;
+  const { version: _version, ...content } = record as LedgerRecord & { source?: string };
+  if (op.kind === "create") delete content.source;
   const intended = op.kind === "create" ? op.record : patchFields(op.recordType, op.patch);
-  const fields = Object.entries(intended).filter(([key]) => key !== "version");
+  const fields = Object.entries(intended).filter(([key]) => key !== "version" && key !== "source");
   return (op.kind !== "create" || fields.length === Object.keys(content).length) &&
-    fields.every(([key, value]) => Object.hasOwn(content, key) && (content as Record<string, unknown>)[key] === value);
+    fields.every(([key, value]) => Object.hasOwn(content, key) && sameValue((content as Record<string, unknown>)[key], value));
 }
 
 export function unappliedOperations(excluded: QueueEntry[], waiting: Map<string, string[]>): UnappliedOperation[] {

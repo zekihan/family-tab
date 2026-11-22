@@ -9,6 +9,12 @@ const (
 	PlanInstallments = "installments"
 )
 
+// Source values for Purchase.Source, Payment.Source and Refund.Source.
+const (
+	SourceApp   = "app"
+	SourceAgent = "agent"
+)
+
 // SettingsID is the fixed ID of the ledger settings record.
 const SettingsID = "ledger"
 
@@ -25,11 +31,12 @@ type Settings struct {
 }
 
 type Person struct {
-	Payday   *int   `json:"payday"   db:"payday"`
-	ID       string `json:"id"       db:"id"`
-	Name     string `json:"name"     db:"name"`
-	Version  string `json:"version"  db:"version"`
-	Archived bool   `json:"archived" db:"archived"`
+	Payday   *int     `json:"payday"   db:"payday"`
+	ID       string   `json:"id"       db:"id"`
+	Name     string   `json:"name"     db:"name"`
+	Version  string   `json:"version"  db:"version"`
+	Aliases  []string `json:"aliases"  db:"-"`
+	Archived bool     `json:"archived" db:"archived"`
 }
 
 type Purchase struct {
@@ -43,6 +50,7 @@ type Purchase struct {
 	Item       string  `json:"item"       db:"item"`
 	BoughtOn   string  `json:"boughtOn"   db:"bought_on"`
 	Plan       string  `json:"plan"       db:"plan"`
+	Source     string  `json:"source"     db:"source"`
 	Version    string  `json:"version"    db:"version"`
 	TotalMinor int64   `json:"totalMinor" db:"total_minor"`
 }
@@ -52,6 +60,7 @@ type Payment struct {
 	ID          string  `json:"id"          db:"id"`
 	PersonID    string  `json:"personId"    db:"person_id"`
 	PaidOn      string  `json:"paidOn"      db:"paid_on"`
+	Source      string  `json:"source"      db:"source"`
 	Version     string  `json:"version"     db:"version"`
 	AmountMinor int64   `json:"amountMinor" db:"amount_minor"`
 }
@@ -61,6 +70,7 @@ type Refund struct {
 	ID          string  `json:"id"          db:"id"`
 	PurchaseID  string  `json:"purchaseId"  db:"purchase_id"`
 	RefundedOn  string  `json:"refundedOn"  db:"refunded_on"`
+	Source      string  `json:"source"      db:"source"`
 	Version     string  `json:"version"     db:"version"`
 	AmountMinor int64   `json:"amountMinor" db:"amount_minor"`
 }
@@ -117,6 +127,7 @@ const (
 	CodePersonHasRecords    = "person_has_records"
 	CodePayoutExceedsCredit = "payout_exceeds_credit"
 	CodeNotSetup            = "not_setup"
+	CodeAliasConflict       = "alias_conflict"
 )
 
 // RuleError is a failed record or change rule.

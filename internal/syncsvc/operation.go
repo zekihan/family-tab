@@ -23,6 +23,7 @@ func commitOperation(
 	op *protocol.Operation,
 	meta store.Meta,
 	now time.Time,
+	source string,
 ) (protocol.Receipt, error) {
 	receipt := protocol.Receipt{
 		Code: nil, Reason: nil, Status: "",
@@ -37,7 +38,7 @@ func commitOperation(
 
 	after := *before
 
-	record, current, rule := prepareChange(before, &after, op)
+	record, current, rule := prepareChange(before, &after, op, source)
 	if rule == nil {
 		rule = validateChange(before, &after, op, now)
 	}
@@ -146,6 +147,7 @@ func invalid(reason string) *ledger.RuleError {
 func prepareChange(
 	before, after *ledger.Records,
 	op *protocol.Operation,
+	source string,
 ) (any, json.RawMessage, *ledger.RuleError) {
 	rule := validateOperation(op)
 	if rule != nil {
@@ -167,7 +169,7 @@ func prepareChange(
 		}
 	}
 
-	return editRecord(before, after, op)
+	return editRecord(before, after, op, source)
 }
 
 func validateOperation(op *protocol.Operation) *ledger.RuleError {
@@ -211,20 +213,35 @@ func containsID(records *ledger.Records, id string) bool {
 func editRecord(
 	before, after *ledger.Records,
 	op *protocol.Operation,
+	source string,
 ) (any, json.RawMessage, *ledger.RuleError) {
 	switch op.RecordType {
 	case ledger.TypeSettings:
 		return editSettings(before, after, op)
 	case ledger.TypePerson:
-		return editRows(&after.People, op, func(row ledger.Person) string { return row.ID })
+		return editRows(&after.People, op, source, func(row ledger.Person) string { return row.ID })
 	case ledger.TypePurchase:
-		return editRows(&after.Purchases, op, func(row ledger.Purchase) string { return row.ID })
+		return editRows(
+			&after.Purchases, op, source, func(row ledger.Purchase) string { return row.ID },
+		)
 	case ledger.TypePayment:
-		return editRows(&after.Payments, op, func(row ledger.Payment) string { return row.ID })
+		return editRows(
+			&after.Payments, op, source, func(row ledger.Payment) string { return row.ID },
+		)
 	case ledger.TypeRefund:
-		return editRows(&after.Refunds, op, func(row ledger.Refund) string { return row.ID })
+		return editRows(
+			&after.Refunds,
+			op,
+			source,
+			func(row ledger.Refund) string { return row.ID },
+		)
 	case ledger.TypePayout:
-		return editRows(&after.Payouts, op, func(row ledger.Payout) string { return row.ID })
+		return editRows(
+			&after.Payouts,
+			op,
+			source,
+			func(row ledger.Payout) string { return row.ID },
+		)
 	default:
 		return nil, nil, invalid("Unknown record type.")
 	}
@@ -234,7 +251,7 @@ func editSettings(
 	before, after *ledger.Records,
 	op *protocol.Operation,
 ) (any, json.RawMessage, *ledger.RuleError) {
-	record, current, rule := decodeChange(before.Settings, op)
+	record, current, rule := decodeChange(before.Settings, op, ledger.SourceApp)
 	if rule == nil {
 		after.Settings = record
 	}
@@ -245,6 +262,7 @@ func editSettings(
 func editRows[T any](
 	rows *[]T,
 	op *protocol.Operation,
+	source string,
 	idOf func(T) string,
 ) (any, json.RawMessage, *ledger.RuleError) {
 	index := slices.IndexFunc(*rows, func(row T) bool { return idOf(row) == op.RecordID })
@@ -254,7 +272,7 @@ func editRows[T any](
 		existing = &(*rows)[index]
 	}
 
-	record, current, rule := decodeChange(existing, op)
+	record, current, rule := decodeChange(existing, op, source)
 	if rule != nil {
 		return nil, current, rule
 	}

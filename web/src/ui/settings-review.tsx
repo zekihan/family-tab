@@ -3,7 +3,7 @@ import { RestoreTimeoutError } from "../data/index.ts";
 import type { EditToken, RestorePreview, ReviewItem, SaveResult } from "../data/index.ts";
 import { isValidDate } from "../ledger/index.ts";
 import { SETTINGS_ID } from "../types.ts";
-import type { LedgerRecord, Person, Settings } from "../types.ts";
+import type { LedgerRecord, RecordFields, Settings } from "../types.ts";
 import { RecordSummary, SaveForm, Sheet, useLedgerUI, useSave } from "./components.tsx";
 import { CashForm, PersonForm, PurchaseForm, ZoneForm } from "./forms.tsx";
 import { patchBetween, recordLabels, recordName, reviewActions } from "./presentation.ts";
@@ -169,7 +169,8 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
     const value = text(key);
     return value && isValidDate(value) ? value : null;
   };
-  const commit = (fields: Record<string, unknown>, recreateGeneration?: string, newPerson?: Omit<Person, "id" | "version">): Promise<SaveResult> => {
+  const source = initial.source === "agent" ? "agent" : "app";
+  const commit = (fields: Record<string, unknown>, recreateGeneration?: string, newPerson?: RecordFields<"person">): Promise<SaveResult> => {
     const opened = recreateGeneration === undefined ? reviewed : { ...reviewed, server: null, generation: recreateGeneration };
     if (opened !== reviewed) setReviewed(opened);
     const patch = opened.server && item.server ? patchBetween({ ...item.server }, fields) : fields;
@@ -191,6 +192,7 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
   switch (op.recordType) {
     case "person": return <PersonForm {...target} initial={{
       ...base, name: text("name") ?? "", payday: integer("payday"), archived: initial.archived === true,
+      aliases: Array.isArray(initial.aliases) ? initial.aliases.filter(alias => typeof alias === "string") : [],
     }} />;
     case "purchase": return <PurchaseForm {...target}
       commitWithNewPerson={(fields, person, generation) => commit(fields, generation, person)}
@@ -198,17 +200,18 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
       ...base, personId, item: text("item") ?? "", totalMinor: integer("totalMinor") ?? 0,
       plan: initial.plan === "installments" ? "installments" : "once", boughtOn: date("boughtOn") ?? today,
       dueDate: date("dueDate"), count: integer("count"), firstDue: date("firstDue"), dueDay: integer("dueDay"), note: text("note"),
+      source,
     }} />;
     case "payment": return <CashForm {...target} type="payment" personId={personId}
       originalDate={server && "paidOn" in server ? server.paidOn : null}
-      initial={{ ...cash, personId, paidOn: date("paidOn") ?? today }} />;
+      initial={{ ...cash, personId, paidOn: date("paidOn") ?? today, source }} />;
     case "payout": return <CashForm {...target} type="payout" personId={personId}
       originalDate={server && "paidOutOn" in server ? server.paidOutOn : null}
       initial={{ ...cash, personId, paidOutOn: date("paidOutOn") ?? today }} />;
     case "refund": return <CashForm {...target} type="refund" purchaseId={purchaseId}
       fixedPurchaseId={server && "purchaseId" in server ? server.purchaseId : undefined}
       originalDate={server && "refundedOn" in server ? server.refundedOn : null}
-      initial={{ ...cash, purchaseId, refundedOn: date("refundedOn") ?? today }} />;
+      initial={{ ...cash, purchaseId, refundedOn: date("refundedOn") ?? today, source }} />;
   }
 }
 

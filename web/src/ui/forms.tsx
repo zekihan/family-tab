@@ -4,12 +4,12 @@ import {
   canonicalTimeZone, computeLedger, defaultInstallmentStart, dueShortcuts, formatAmountInput, formatTRY, installmentPreview,
   lastDayOfMonth, MAX_AMOUNT_MINOR, parseAmount, paymentChips,
 } from "../ledger/index.ts";
-import type { LedgerRecord, Payment, PaymentChip, Payout, Plan, RecordByType, RecordType, Refund } from "../types.ts";
+import type { LedgerRecord, Payment, PaymentChip, Payout, Plan, RecordByType, RecordFields, RecordType, Refund } from "../types.ts";
 import { AmountField, Chip, DateField, SaveForm, useLedgerUI, useSave } from "./components.tsx";
 import type { Commit, DateFieldHandle } from "./components.tsx";
 import { displayDate, eventDateMax, patchBetween, paymentLabels, purchaseDate } from "./presentation.ts";
 
-type Fields<T extends RecordType> = Omit<RecordByType[T], "id" | "version">;
+type Fields<T extends RecordType> = RecordFields<T>;
 type Saved = Extract<SaveResult, { status: "saved" }>;
 type FormTarget<T extends RecordType> = {
   initial?: RecordByType[T];
@@ -158,7 +158,7 @@ export function PurchaseForm({ personId, originalDate, commitWithNewPerson, ...t
       return;
     }
     void save.submit(() => {
-      const fieldsForPerson = { name: newName.trim(), payday, archived: false };
+      const fieldsForPerson = { name: newName.trim(), aliases: [], payday, archived: false };
       if (commitWithNewPerson) return commitWithNewPerson(fields, fieldsForPerson, save.recreateGeneration);
       return store.savePurchaseWithNewPerson(fieldsForPerson, initial && save.token
         ? { id: initial.id, token: save.token, patch: patchBetween(initial, fields) } : { fields });
@@ -269,7 +269,7 @@ export function PersonForm(target: FormTarget<"person">) {
   const paydayId = useId();
   const day = parsePayday(payday);
   const invalidPayday = payday !== "" && day === null;
-  return <SaveForm {...save} onSave={() => save.persist({ name: name.trim(), payday: day, archived })} blocked={invalidPayday}
+  return <SaveForm {...save} onSave={() => save.persist({ name: name.trim(), aliases: initial?.aliases ?? [], payday: day, archived })} blocked={invalidPayday}
     label={target.commit ? "Resubmit" : "Save"}>
     <label className="field">Name<input required value={name} onChange={event => setName(event.target.value)} /></label>
     <div className="field"><label htmlFor={paydayId}>Payday (optional)</label>

@@ -6,7 +6,7 @@ import * as ledger from "../ledger/index.ts";
 import type { LedgerView, RuleError } from "../ledger/index.ts";
 import { SETTINGS_ID } from "../types.ts";
 import type {
-  BackupFile, LedgerRecord, Me, Operation, Receipt, RecordByType, Records, RecordType, RestoreRequest, Snapshot,
+  BackupFile, LedgerRecord, Me, Operation, Receipt, RecordFields, Records, RecordType, RestoreRequest, Snapshot,
 } from "../types.ts";
 import { AuthError, createApi, NetworkError, ServerError } from "./api.ts";
 import { backupRecords, countRecords, parseBackup, reviewOperation, reviewRecord, validPatch } from "./backup.ts";
@@ -14,7 +14,8 @@ import { changeLocal, draft, finishLogout, LocalStateError, openLedger, purge, r
 import type { LedgerDB, LocalState } from "./db.ts";
 import { withSyncLock } from "./lock.ts";
 import {
-  affectedPeople, applyOperation, emptyRecords, findRecord, patchFields, proposedRecord, related, replay, unappliedOperations,
+  affectedPeople, applyOperation, emptyRecords, findRecord, patchFields, proposedRecord, related, replay, sameValue,
+  unappliedOperations,
 } from "./model.ts";
 import type { QueueEntry } from "./model.ts";
 import { ensureLatestApp } from "./service-worker.ts";
@@ -127,14 +128,14 @@ function invalid(reason: string, code: RuleError["code"] = "invalid"): SaveResul
   return { status: "invalid", error: { code, reason, blocking: [] } };
 }
 
-function noVersion(record: LedgerRecord) {
-  const { version: _version, ...value } = record;
+function editableFields(record: LedgerRecord) {
+  const { version: _version, source: _source, ...value } = record as LedgerRecord & { source?: string };
   return value;
 }
 
 function changedFields(current: LedgerRecord, fields: Record<string, unknown>) {
   const existing = { ...current } as Record<string, unknown>;
-  return Object.fromEntries(Object.entries(fields).filter(([key, value]) => existing[key] !== value));
+  return Object.fromEntries(Object.entries(fields).filter(([key, value]) => !sameValue(existing[key], value)));
 }
 
 function reviewServer(snapshot: Snapshot | undefined, row: Extract<QueueEntry, { state: "needsReview" }>) {
@@ -158,8 +159,8 @@ function reviewLocal(current: LedgerRecord | null, row: Extract<QueueEntry, { st
 }
 
 type ReviewAction = "keepServer" | "keepLocal" | "discard" | "editAndResubmit" | "confirmAlreadyReturned";
-type NewPerson = Omit<RecordByType["person"], "id" | "version">;
-type PurchaseFields = Omit<RecordByType["purchase"], "id" | "version">;
+type NewPerson = RecordFields<"person">;
+type PurchaseFields = RecordFields<"purchase">;
 
 /** A framework-independent store backed by the browser's shared IndexedDB. */
 export function createStore(options: StoreOptions = {}) {
@@ -604,12 +605,12 @@ export function createStore(options: StoreOptions = {}) {
 
   /** Create a record with a fresh ID. Use setup() to initialize ledger settings. */
   function createRecord<T extends Exclude<RecordType, "settings">>(
-    type: T, input: Omit<RecordByType[T], "id" | "version">,
+    type: T, input: RecordFields<T>,
   ): Promise<SaveResult> {
     return create(type, uuid(), input);
   }
 
-  function create<T extends RecordType>(type: T, id: string, input: Omit<RecordByType[T], "id" | "version">, person?: NewPerson) {
+  function create<T extends RecordType>(type: T, id: string, input: RecordFields<T>, person?: NewPerson) {
     return localSave(state => {
       if (!state.snapshot) return { status: "notReady" };
       const view = replay(state.snapshot, state.queue, now());
@@ -622,13 +623,14 @@ export function createStore(options: StoreOptions = {}) {
           viewHasUndo(state, before, input.personId)) {
         return invalid("Wait for the undo window to end before recording cash returned.");
       }
-      const record = { ...input, id } as Omit<LedgerRecord, "version">;
+      const { source: _source, ...fields } = input as typeof input & { source?: unknown };
+      const record = { ...fields, id } as Omit<LedgerRecord, "version">;
       return enqueueWithPerson(state, { ...newOperation(state.snapshot.generation, type, id), kind: "create", record }, before, person);
     });
   }
 
   function edit<T extends RecordType>(
-    type: T, id: string, opened: EditToken, patch?: Partial<Omit<RecordByType[T], "id" | "version">>,
+    type: T, id: string, opened: EditToken, patch?: Partial<RecordFields<T>>,
     person?: NewPerson,
   ): Promise<SaveResult> {
     return localSave(state => {
@@ -756,12 +758,12 @@ export function createStore(options: StoreOptions = {}) {
         op = { ...base, kind: "delete", baseVersion: current.version, preImage: current };
       } else if (!current) {
         const replacement = keep ?? (row.restore ? local : row.local);
-        const payload = replacement ? noVersion(replacement) : original.kind === "create" ? original.record : null;
+        const payload = replacement ? editableFields(replacement) : original.kind === "create" ? original.record : null;
         if (!payload && !edited && !newPerson) return invalid("Enter the full replacement record before resubmitting.");
         const record = { ...payload, ...edited, id: original.recordId } as LedgerRecord;
-        op = { ...base, kind: "create", record: noVersion(record) };
+        op = { ...base, kind: "create", record: editableFields(record) };
       } else {
-        const fields = keep ? noVersion(keep) :
+        const fields = keep ? editableFields(keep) :
           edited ?? (original.kind === "update" ? original.patch : original.record);
         const changes = keep || row.restore ? changedFields(current, fields) : fields;
         const patch = patchFields(original.recordType, changes);
@@ -993,7 +995,7 @@ export function createStore(options: StoreOptions = {}) {
     createRecord, savePurchaseWithNewPerson,
     /** Apply a field-level patch if the captured generation and record version still match. */
     updateRecord: <T extends RecordType>(
-      type: T, id: string, opened: EditToken, patch: Partial<Omit<RecordByType[T], "id" | "version">>,
+      type: T, id: string, opened: EditToken, patch: Partial<RecordFields<T>>,
     ) => edit(type, id, opened, patch),
     /** Apply a deletion locally and give it a seven-second undo window. */
     deleteRecord: (type: Exclude<RecordType, "settings">, id: string, opened: EditToken) => edit(type, id, opened),

@@ -1,0 +1,51 @@
+{
+  "name": "alias-conflict-alias-to-name",
+  "description": "Contract A1: an alias matching another person's name (Turkish-folded) is alias_conflict",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "mom",
+        "name": "Mom",
+        "payday": null,
+        "archived": false,
+        "aliases": [
+          "Annem"
+        ],
+        "version": "v1"
+      },
+      {
+        "id": "aunt",
+        "name": "Ayşe",
+        "payday": null,
+        "archived": false,
+        "aliases": [],
+        "version": "v1"
+      }
+    ],
+    "purchases": [],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "op": {
+    "id": "op-1",
+    "generation": "g1",
+    "createdAt": "2025-11-22T12:00:00Z",
+    "recordType": "person",
+    "recordId": "mom",
+    "kind": "update",
+    "baseVersion": "v1",
+    "patch": {
+      "aliases": [
+        "Annem",
+        "AYSE"
+      ]
+    }
+  },
+  "expect": {
+    "status": "rejected",
+    "code": "alias_conflict"
+  }
+}

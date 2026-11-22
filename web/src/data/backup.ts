@@ -7,9 +7,11 @@ function object(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
 }
 
-type FieldType = "string" | "number" | "boolean" | "string?" | "number?";
+type FieldType = "string" | "number" | "boolean" | "string?" | "number?" | "string[]" | "source";
 
 function validField(value: unknown, type: FieldType): boolean {
+  if (type === "string[]") return Array.isArray(value) && value.every(entry => typeof entry === "string");
+  if (type === "source") return value === "app" || value === "agent";
   if (type === "number" || type === "number?") {
     return (type === "number?" && value === null) || Number.isSafeInteger(value);
   }
@@ -42,11 +44,12 @@ function backupRecord(
 }
 
 const recordFields = {
-  people: { name: "string", payday: "number?", archived: "boolean" },
+  people: { name: "string", aliases: "string[]", payday: "number?", archived: "boolean" },
   purchases: { personId: "string", item: "string", totalMinor: "number", boughtOn: "string",
-    plan: "string", dueDate: "string?", count: "number?", firstDue: "string?", dueDay: "number?", note: "string?" },
-  payments: { personId: "string", amountMinor: "number", paidOn: "string", note: "string?" },
-  refunds: { purchaseId: "string", amountMinor: "number", refundedOn: "string", note: "string?" },
+    plan: "string", dueDate: "string?", count: "number?", firstDue: "string?", dueDay: "number?", note: "string?",
+    source: "source" },
+  payments: { personId: "string", amountMinor: "number", paidOn: "string", note: "string?", source: "source" },
+  refunds: { purchaseId: "string", amountMinor: "number", refundedOn: "string", note: "string?", source: "source" },
   payouts: { personId: "string", amountMinor: "number", paidOutOn: "string", note: "string?" },
 } as const;
 
@@ -56,13 +59,19 @@ const types = {
   refund: recordFields.refunds, payout: recordFields.payouts,
 } as const;
 
+// A create record has no version and no source; the server sets both.
+function createFields(type: RecordType): Record<string, FieldType> {
+  const { source: _source, ...fields } = types[type] as Record<string, FieldType>;
+  return fields;
+}
+
 const operationFields = ["id", "generation", "createdAt", "recordType", "recordId", "kind"];
 
 export function validPatch(type: RecordType, patch: unknown): boolean {
   if (!object(patch)) return false;
   const fields: Record<string, FieldType> = types[type];
   return Object.entries(patch).every(([key, value]) =>
-    Object.hasOwn(fields, key) && !(type === "refund" && key === "purchaseId") &&
+    Object.hasOwn(fields, key) && key !== "source" && !(type === "refund" && key === "purchaseId") &&
     !(type === "settings" && key === "currency") && validField(value, fields[key]));
 }
 
@@ -82,7 +91,7 @@ function validateBackupOperation(op: unknown, error: (reason: string) => never):
   const fields = types[type];
   switch (op.kind) {
     case "create":
-      if (!onlyFields(op, [...allowed, "record"]) || !backupRecord(op.record, fields, "absent") ||
+      if (!onlyFields(op, [...allowed, "record"]) || !backupRecord(op.record, createFields(type), "absent") ||
           op.record.id !== op.recordId) error("invalid create record.");
       break;
     case "update":

@@ -18,6 +18,7 @@ type recordFields map[string]json.RawMessage
 func decodeChange[T any](
 	existing *T,
 	op *protocol.Operation,
+	source string,
 ) (*T, json.RawMessage, *ledger.RuleError) {
 	var fields recordFields
 
@@ -38,7 +39,7 @@ func decodeChange[T any](
 		fields = shape
 	}
 
-	record, err := decodePayload[T](op, fields)
+	record, err := decodePayload[T](op, fields, source)
 	if err != nil {
 		return nil, nil, invalid(err.Error())
 	}
@@ -48,14 +49,17 @@ func decodeChange[T any](
 
 // decodePayload validates the operation against the record shape. For a backup
 // there is no base record to check, so edits use the zero value for that shape.
-func decodePayload[T any](op *protocol.Operation, fields recordFields) (*T, error) {
+// A create gets the given source on record types that carry one.
+func decodePayload[T any](
+	op *protocol.Operation, fields recordFields, source string,
+) (*T, error) {
 	record := new(T)
 
 	var err error
 
 	switch op.Kind {
 	case ledger.KindCreate:
-		fields, err = decodeCreate(record, op)
+		fields, err = decodeCreate(record, op, source)
 	case ledger.KindUpdate, ledger.KindDelete:
 		if fields == nil {
 			_, fields, err = encodeRecord(record)
@@ -89,7 +93,7 @@ func decodePayload[T any](op *protocol.Operation, fields recordFields) (*T, erro
 }
 
 func validateBackupPayload[T any](op *protocol.Operation) error {
-	_, err := decodePayload[T](op, nil)
+	_, err := decodePayload[T](op, nil, ledger.SourceApp)
 
 	return err
 }
@@ -122,7 +126,7 @@ func matchesString(raw json.RawMessage, expected string) bool {
 	return err == nil && value != nil && *value == expected
 }
 
-func decodeCreate(record any, op *protocol.Operation) (recordFields, error) {
+func decodeCreate(record any, op *protocol.Operation, source string) (recordFields, error) {
 	if op.BaseVersion != nil || op.Patch != nil || op.PreImage != nil {
 		return nil, fmt.Errorf("%w: a create only accepts a record", errPayload)
 	}
@@ -134,6 +138,9 @@ func decodeCreate(record any, op *protocol.Operation) (recordFields, error) {
 
 	delete(shape, "version")
 
+	_, hasSource := shape["source"]
+	delete(shape, "source")
+
 	fields, err := decodeFields(op.Record, shape)
 	if err != nil {
 		return nil, err
@@ -141,6 +148,10 @@ func decodeCreate(record any, op *protocol.Operation) (recordFields, error) {
 
 	if len(fields) != len(shape) || !matchesString(fields["id"], op.RecordID) {
 		return nil, fmt.Errorf("%w: a create needs all record fields and a matching id", errPayload)
+	}
+
+	if hasSource {
+		fields["source"] = json.RawMessage(`"` + source + `"`)
 	}
 
 	return fields, nil
@@ -177,7 +188,7 @@ func decodeEdit[T any](op *protocol.Operation, fields recordFields) error {
 
 func patchable(recordType, field string) bool {
 	switch field {
-	case "id", "version":
+	case "id", "version", "source":
 		return false
 	case "purchaseId":
 		return recordType != ledger.TypeRefund

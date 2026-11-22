@@ -103,6 +103,8 @@ func validateRecordChange(
 	}
 
 	switch value := row.(type) {
+	case *Person:
+		return validatePersonChange(after, value, asRecord[*Person](previous))
 	case *Purchase:
 		old := asRecord[*Purchase](previous)
 
@@ -123,6 +125,15 @@ func validateRecordChange(
 	}
 
 	return nil
+}
+
+func validatePersonChange(after *Records, person, previous *Person) *RuleError {
+	if previous != nil && previous.Name == person.Name &&
+		slices.Equal(previous.Aliases, person.Aliases) {
+		return nil
+	}
+
+	return validateAliasConflicts(after.People, person)
 }
 
 func (rules recordRules) validatePurchaseChange(purchase, previous *Purchase) *RuleError {

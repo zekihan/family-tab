@@ -162,6 +162,10 @@ func restoreRecords(req *protocol.RestoreRequest, now time.Time) (*ledger.Record
 		return nil, "Backup record IDs must be lowercase UUIDv4."
 	}
 
+	if !validSources(records) {
+		return nil, `Backup record sources must be "app" or "agent".`
+	}
+
 	rule := ledger.ValidateRecords(records, today)
 	if rule != nil {
 		return nil, rule.Reason
@@ -318,6 +322,20 @@ func stampBackupVersions(records *ledger.Records, version string) bool {
 	}
 
 	return true
+}
+
+func validSources(records *ledger.Records) bool {
+	valid := func(source string) bool {
+		return source == ledger.SourceApp || source == ledger.SourceAgent
+	}
+
+	return !slices.ContainsFunc(records.Purchases, func(row ledger.Purchase) bool {
+		return !valid(row.Source)
+	}) && !slices.ContainsFunc(records.Payments, func(row ledger.Payment) bool {
+		return !valid(row.Source)
+	}) && !slices.ContainsFunc(records.Refunds, func(row ledger.Refund) bool {
+		return !valid(row.Source)
+	})
 }
 
 // missingBackupField names the first required field a decoded backup lacks.

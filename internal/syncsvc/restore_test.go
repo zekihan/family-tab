@@ -3,6 +3,7 @@ package syncsvc
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,7 +21,10 @@ func TestRestoreAndRetry(t *testing.T) {
 	req := restoreRequest()
 
 	req.Backup.People = []ledger.Person{
-		{ID: personID, Name: "Imported", Version: uuid.NewString(), Payday: nil, Archived: false},
+		{
+			ID: personID, Name: "Imported", Version: uuid.NewString(), Payday: nil,
+			Archived: false, Aliases: []string{"Annem"},
+		},
 	}
 	req.Backup.Payments = []ledger.Payment{
 		{
@@ -29,9 +33,17 @@ func TestRestoreAndRetry(t *testing.T) {
 			AmountMinor: 500,
 			PaidOn:      "2025-01-01",
 			Note:        nil,
+			Source:      "mcp",
 			Version:     "",
 		},
 	}
+
+	badSource := restoreOK(t, svc, req)
+	if badSource.Code == nil || *badSource.Code != ledger.CodeInvalid {
+		t.Fatalf("restore with an unknown source accepted: %+v", badSource)
+	}
+
+	req.Backup.Payments[0].Source = ledger.SourceAgent
 
 	mismatch := restoreOK(t, svc, req)
 	if mismatch.Code == nil || *mismatch.Code != protocol.CodeRevisionMismatch ||
@@ -69,7 +81,8 @@ func assertRestoredRows(t *testing.T, got *protocol.Snapshot, version string) {
 	if len(got.People) != 1 || got.People[0].Name != "Imported" ||
 		got.People[0].Version != version ||
 		len(got.Payments) != 1 ||
-		got.Payments[0].Version != version ||
+		got.Payments[0].Version != version || got.Payments[0].Source != ledger.SourceAgent ||
+		!slices.Equal(got.People[0].Aliases, []string{"Annem"}) ||
 		got.Settings.Version != version {
 		t.Fatalf("incorrectly restored rows: %+v", got)
 	}
@@ -131,7 +144,10 @@ func TestRestoreFailureLeavesLedgerIntact(t *testing.T) {
 
 	req.Backup.TimeZone = "UTC"
 	req.Backup.People = []ledger.Person{
-		{ID: personID, Name: "Imported", Version: "", Payday: nil, Archived: false},
+		{
+			ID: personID, Name: "Imported", Version: "", Payday: nil, Archived: false,
+			Aliases: []string{},
+		},
 	}
 
 	_, err := db.DB().ExecContext(t.Context(), `

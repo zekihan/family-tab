@@ -108,4 +108,15 @@ var Migrations = []string{
 		expires_at TEXT NOT NULL
 	);
 	`,
+	// Schema v2 - Person aliases and record sources.
+	`
+	-- aliases is a JSON array of strings.
+	ALTER TABLE people ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]';
+	ALTER TABLE purchases ADD COLUMN source TEXT NOT NULL DEFAULT 'app'
+		CHECK (source IN ('app', 'agent'));
+	ALTER TABLE payments ADD COLUMN source TEXT NOT NULL DEFAULT 'app'
+		CHECK (source IN ('app', 'agent'));
+	ALTER TABLE refunds ADD COLUMN source TEXT NOT NULL DEFAULT 'app'
+		CHECK (source IN ('app', 'agent'));
+	`,
 }

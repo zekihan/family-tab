@@ -90,7 +90,7 @@ test("deleting a purchase reallocates receipts to remaining dated amounts before
       { ...purchase, id: "next", totalMinor: 800, dueDate: "2025-11-25" },
       { ...purchase, id: "undated", totalMinor: 100 },
     ],
-    payments: [{ id: "payment", personId: "mom", amountMinor: 1_000, paidOn: today, note: null, version: "1" }],
+    payments: [{ id: "payment", personId: "mom", amountMinor: 1_000, paidOn: today, note: null, source: "app", version: "1" }],
   });
   const before = computeLedger(records, today);
   assert.deepEqual(before.purchases.first.paid, [1_000]);
@@ -104,7 +104,7 @@ test("deleting a purchase reallocates receipts to remaining dated amounts before
 test("credit covers a later purchase and stays with the person who paid", () => {
   const records = ledger({
     purchases: [{ ...purchase, id: "earlier", totalMinor: 100 }],
-    payments: [{ id: "payment", personId: "mom", amountMinor: 250, paidOn: "2025-11-01", note: null, version: "1" }],
+    payments: [{ id: "payment", personId: "mom", amountMinor: 250, paidOn: "2025-11-01", note: null, source: "app", version: "1" }],
   });
   assert.equal(computeLedger(records, today).balances.mom.credit, 150);
   const after = computeLedger({
@@ -169,10 +169,10 @@ const recordsArb = fc.record({
     purchases,
     refunds: input.purchases.flatMap(({ refund }, index) => refund > 0 ? [{
       id: `refund-${index}`, purchaseId: purchases[index].id, amountMinor: Math.min(refund, purchases[index].totalMinor),
-      note: null, version: "1", refundedOn: today,
+      note: null, source: "app", version: "1", refundedOn: today,
     }] : []),
     payments: input.payments.map((amountMinor, index) => ({
-      id: `payment-${index}`, personId: "mom", amountMinor, note: null, paidOn: today, version: "1",
+      id: `payment-${index}`, personId: "mom", amountMinor, note: null, paidOn: today, source: "app", version: "1",
     })),
     payouts: input.payouts.map((amountMinor, index) => ({
       id: `payout-${index}`, personId: "mom", amountMinor, note: null, paidOutOn: today, version: "1",

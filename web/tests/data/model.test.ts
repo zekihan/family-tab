@@ -41,6 +41,22 @@ test("only a complete matching create record is reflected", () => {
   assert.equal(reflects(initial(), { ...create, record }), true);
 });
 
+test("a created purchase, payment or refund gets source app locally and aliases compare by value", () => {
+  const created = applyOperation(initial(), { ...common, kind: "create", id: "create", recordId: "payment",
+    recordType: "payment", record: { id: "payment", ...payment(), source: undefined } as never });
+  assert.equal(created.payments.find(row => row.id === "payment")?.source, "app");
+  const { source: _source, ...record } = { ...payment(), id: "payment" };
+  const create: Operation = { ...common, kind: "create", id: "create", recordId: "payment", recordType: "payment", record };
+  assert.equal(reflects({ ...created, payments: [{ ...record, source: "agent", version: "create" }] }, create), true);
+  const aliases: Operation = { ...common, kind: "update", id: "aliases", recordId: person.id, recordType: "person",
+    baseVersion: person.version, patch: { aliases: ["Anne", "Annem"], source: "agent" } };
+  const updated = applyOperation(initial(), aliases);
+  assert.deepEqual(updated.people.find(row => row.id === person.id)?.aliases, ["Anne", "Annem"]);
+  assert.equal("source" in updated.people.find(row => row.id === person.id)!, false);
+  assert.equal(reflects(updated, { ...aliases, patch: { aliases: ["Anne", "Annem"] } }), true);
+  assert.equal(reflects(updated, { ...aliases, patch: { aliases: ["Anne"] } }), false);
+});
+
 test("queue deps account for moves, refunds, person creates and independent settings", () => {
   const create: Operation = { ...common, id: "create-person", kind: "create",
     recordType: "person", recordId: other.id, record: { ...person, id: other.id } };

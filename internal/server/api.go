@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	"github.com/zekihan/family-tab/internal/auth"
+	"github.com/zekihan/family-tab/internal/ledger"
 	"github.com/zekihan/family-tab/internal/protocol"
 )
 
@@ -137,7 +138,7 @@ type opsResponse struct {
 }
 
 func (srv *Server) apply(ctx context.Context, req *protocol.OpsRequest) (*opsResponse, error) {
-	value, err := srv.deps.Sync.Apply(ctx, req)
+	value, err := srv.deps.Sync.Apply(ctx, req, ledger.SourceApp)
 	if err != nil {
 		return nil, fmt.Errorf("apply sync batch: %w", err)
 	}

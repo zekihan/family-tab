@@ -214,7 +214,7 @@ func TestRestoreRejectsMalformedBackupFields(t *testing.T) {
 	body := `{"opId":"` + uuid.NewString() + `","expectedRevision":0,"backup":{
 		"format":"family-tab-backup","formatVersion":1,"exportedAt":"2026-01-01T00:00:00Z",
 		"currency":"TRY","timeZone":"UTC",
-		"people":[{"id":"00000000-0000-4000-8000-000000000001","name":"Mom","payday":null,"archived":false}],
+		"people":[{"id":"00000000-0000-4000-8000-000000000001","name":"Mom","payday":null,"archived":false,"aliases":[]}],
 		"purchases":[],"payments":[],"refunds":[],"payouts":[],
 		"unapplied":[{"order":0,"reason":null,"dependencies":[],"op":{
 			"id":"00000000-0000-4000-8000-000000000002","generation":"before",
@@ -228,6 +228,9 @@ func TestRestoreRejectsMalformedBackupFields(t *testing.T) {
 	}{
 		{"missing payday", `"payday":null,`, ""},
 		{"missing archived", `,"archived":false`, ""},
+		{"missing aliases", `,"aliases":[]`, ""},
+		{"null aliases", `"aliases":[]`, `"aliases":null`},
+		{"invalid alias", `"aliases":[]`, `"aliases":[" Mom "]`},
 		{"unknown record field", `"archived":false`, `"archived":false,"extra":null`},
 		{"missing order", `"order":0,`, ""},
 		{"null order", `"order":0`, `"order":null`},

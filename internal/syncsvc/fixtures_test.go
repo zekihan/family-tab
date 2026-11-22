@@ -72,6 +72,8 @@ func testChangeFixture(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 
+	defaultFixtureFields(t, &fixture)
+
 	zone, err := time.LoadLocation(fixture.TimeZone)
 	if err != nil {
 		t.Fatal(err)
@@ -139,4 +141,80 @@ func withWireIDs(input []byte) []byte {
 
 		return append(slices.Clip(groups[1]), []byte(`"`+id+`"`)...)
 	})
+}
+
+// Fixtures may omit aliases (default []) and source (default "app"), except
+// that a create record never gets a source.
+func defaultFixtureFields(t *testing.T, fixture *changeFixture) {
+	t.Helper()
+
+	records := &fixture.Records
+	for i := range records.People {
+		if records.People[i].Aliases == nil {
+			records.People[i].Aliases = []string{}
+		}
+	}
+
+	for i := range records.Purchases {
+		defaultSource(&records.Purchases[i].Source)
+	}
+
+	for i := range records.Payments {
+		defaultSource(&records.Payments[i].Source)
+	}
+
+	for i := range records.Refunds {
+		defaultSource(&records.Refunds[i].Source)
+	}
+
+	op := &fixture.Op
+	switch op.Kind {
+	case ledger.KindCreate:
+		op.Record = withDefaultFields(t, op.Record, op.RecordType, false)
+	case ledger.KindDelete:
+		op.PreImage = withDefaultFields(t, op.PreImage, op.RecordType, true)
+	}
+}
+
+func defaultSource(source *string) {
+	if *source == "" {
+		*source = ledger.SourceApp
+	}
+}
+
+func withDefaultFields(
+	t *testing.T, raw json.RawMessage, recordType string, withSource bool,
+) json.RawMessage {
+	t.Helper()
+
+	var fields map[string]json.RawMessage
+
+	err := json.Unmarshal(raw, &fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaults := map[string]json.RawMessage{}
+
+	switch recordType {
+	case ledger.TypePerson:
+		defaults["aliases"] = json.RawMessage(`[]`)
+	case ledger.TypePurchase, ledger.TypePayment, ledger.TypeRefund:
+		if withSource {
+			defaults["source"] = json.RawMessage(`"app"`)
+		}
+	}
+
+	for key, value := range defaults {
+		if _, ok := fields[key]; !ok {
+			fields[key] = value
+		}
+	}
+
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return encoded
 }

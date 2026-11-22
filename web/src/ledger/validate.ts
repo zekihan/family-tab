@@ -5,6 +5,7 @@ import { isValidDate, isValidTimeZone } from "./dates.ts";
 import { isValidAmount } from "./limits.ts";
 import { installmentPreview } from "./schedule.ts";
 import { computeLedger } from "./balance.ts";
+import { validateAliasConflicts, validateAliases } from "./names.ts";
 
 function rule(code: ReceiptCode, reason: string, blocking: string[] = []): RuleError {
   return { code, reason, blocking };
@@ -34,7 +35,7 @@ function validatePerson(person: Person): RuleError | null {
   if (!hasText(name, 200) || (payday !== null && (!Number.isInteger(payday) || payday < 1 || payday > 31))) {
     return rule("invalid", "Invalid person name or payday.");
   }
-  return null;
+  return validateAliases(person);
 }
 
 function validatePurchase(purchase: Purchase, person: Person | undefined, today: string, previous?: Purchase): RuleError | null {
@@ -83,6 +84,10 @@ function validateRefund(refund: Refund, purchase: Purchase | undefined, today: s
 
 function validateRefundTotal(purchase: Purchase, refunded: number): RuleError | null {
   return refunded > purchase.totalMinor ? rule("refunds_exceed_total", "Refunds exceed the purchase total.") : null;
+}
+
+function sameAliases(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((alias, index) => alias === b[index]);
 }
 
 function recordGroups(records: Records): { [K in RecordType]: RecordByType[K][] } {
@@ -142,6 +147,10 @@ export function validateRecords(records: Records, today: string): RuleError | nu
     const error = validateRefundTotal(purchase, refundTotals.get(purchase.id) ?? 0);
     if (error) return error;
   }
+  for (const person of records.people) {
+    const error = validateAliasConflicts(records.people, person);
+    if (error) return error;
+  }
   return null;
 }
 
@@ -191,8 +200,13 @@ export function validateChange(before: Records, after: Records, change: Change, 
   switch (recordType) {
     case "settings":
       return validateSettings(after.settings);
-    case "person":
-      return validatePerson(findById(next.person, recordId)!);
+    case "person": {
+      const person = findById(next.person, recordId)!;
+      const prior = findById(previous.person, recordId);
+      const error = validatePerson(person);
+      if (error || (prior && prior.name === person.name && sameAliases(prior.aliases, person.aliases))) return error;
+      return validateAliasConflicts(next.person, person);
+    }
     case "purchase": {
       const purchase = findById(next.purchase, recordId)!;
       const prior = findById(previous.purchase, recordId);

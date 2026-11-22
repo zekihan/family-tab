@@ -18,12 +18,16 @@ export interface Settings {
 export interface Person {
   id: string;
   name: string;
+  aliases: string[];
   payday: number | null;
   archived: boolean;
   version: string;
 }
 
 export type Plan = "once" | "installments";
+
+/** Who created a purchase, payment or refund. Set by the server on create. */
+export type RecordSource = "app" | "agent";
 
 export interface Purchase {
   id: string;
@@ -37,6 +41,7 @@ export interface Purchase {
   firstDue: DateString | null;
   dueDay: number | null;
   note: string | null;
+  source: RecordSource;
   version: string;
 }
 
@@ -46,6 +51,7 @@ export interface Payment {
   amountMinor: number;
   paidOn: DateString;
   note: string | null;
+  source: RecordSource;
   version: string;
 }
 
@@ -55,6 +61,7 @@ export interface Refund {
   amountMinor: number;
   refundedOn: DateString;
   note: string | null;
+  source: RecordSource;
   version: string;
 }
 
@@ -89,6 +96,9 @@ export interface RecordByType {
   payout: Payout;
 }
 
+/** The editable fields of a record: everything but its ID, version and server-set source. */
+export type RecordFields<T extends RecordType> = Omit<RecordByType[T], "id" | "version" | "source">;
+
 interface OperationBase {
   id: string;
   generation: string;
@@ -100,7 +110,7 @@ interface OperationBase {
 
 export type CreateOperation = OperationBase & {
   kind: "create";
-  record: Omit<LedgerRecord, "version">;
+  record: Omit<LedgerRecord, "version" | "source">;
 };
 
 export type UpdateOperation = OperationBase & {
@@ -127,7 +137,8 @@ export type ReceiptCode =
   | "purchase_has_refunds"
   | "person_has_records"
   | "payout_exceeds_credit"
-  | "not_setup";
+  | "not_setup"
+  | "alias_conflict";
 
 export interface Receipt {
   opId: string;

@@ -1,0 +1,50 @@
+{
+  "name": "alias-conflict-archived",
+  "description": "Contract A1: an archived person's alias still conflicts",
+  "timeZone": "UTC",
+  "today": "2025-11-22",
+  "records": {
+    "people": [
+      {
+        "id": "gran",
+        "name": "Gran",
+        "payday": null,
+        "archived": true,
+        "aliases": [
+          "Babaanne"
+        ],
+        "version": "v1"
+      },
+      {
+        "id": "aunt",
+        "name": "Ayşe",
+        "payday": null,
+        "archived": false,
+        "aliases": [],
+        "version": "v1"
+      }
+    ],
+    "purchases": [],
+    "payments": [],
+    "refunds": [],
+    "payouts": []
+  },
+  "op": {
+    "id": "op-1",
+    "generation": "g1",
+    "createdAt": "2025-11-22T12:00:00Z",
+    "recordType": "person",
+    "recordId": "aunt",
+    "kind": "update",
+    "baseVersion": "v1",
+    "patch": {
+      "aliases": [
+        "BABAANNE"
+      ]
+    }
+  },
+  "expect": {
+    "status": "rejected",
+    "code": "alias_conflict"
+  }
+}
