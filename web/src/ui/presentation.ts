@@ -41,6 +41,10 @@ export function purchaseDate(entered: string | null, today: string, due: string 
   return { date, backdated, invalid: !!due && date > due };
 }
 
+export function eventDateMax(date: string, today: string, originalDate?: string | null) {
+  return date === originalDate ? undefined : today;
+}
+
 export function patchBetween<T extends object>(before: Partial<T>, after: T): Partial<T> {
   return Object.fromEntries(Object.entries(after).filter(([key, value]) => before[key as keyof T] !== value)) as Partial<T>;
 }

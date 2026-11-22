@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dateInputText, parseDateInput, patchBetween, purchaseDate, statusText } from "../../src/ui/presentation.ts";
+import { dateInputText, eventDateMax, parseDateInput, patchBetween, purchaseDate, statusText } from "../../src/ui/presentation.ts";
+
+test("caps only new or changed event dates at today", () => {
+  const today = "2026-11-22";
+  const savedDate = "2026-11-23";
+  assert.equal(eventDateMax(savedDate, today, savedDate), undefined);
+  assert.equal(eventDateMax("2026-11-24", today, savedDate), today);
+  assert.equal(eventDateMax(savedDate, today), today);
+  assert.equal(eventDateMax(savedDate, today, null), today);
+});
 
 test("auto-backdates an untouched purchase date without pinning it after a plan change", () => {
   assert.deepEqual(purchaseDate(null, "2026-11-22", "2026-09-30"), {

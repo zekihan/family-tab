@@ -7,7 +7,7 @@ import {
 import type { Payment, Payout, Plan, RecordByType, RecordType, Refund } from "../types.ts";
 import { AmountField, Chip, DateField, SaveForm, useLedgerUI, useSave } from "./components.tsx";
 import type { Commit } from "./components.tsx";
-import { displayDate, patchBetween, paymentLabels, purchaseDate } from "./presentation.ts";
+import { displayDate, eventDateMax, patchBetween, paymentLabels, purchaseDate } from "./presentation.ts";
 
 type Fields<T extends RecordType> = Omit<RecordByType[T], "id" | "version">;
 type Saved = Extract<SaveResult, { status: "saved" }>;
@@ -17,6 +17,7 @@ type FormTarget<T extends RecordType> = {
   commit?: Commit<Fields<T>>;
   onSaved: (result: Saved) => void;
 };
+type DatedFormTarget<T extends RecordType> = FormTarget<T> & { originalDate?: string | null };
 
 function useRecordForm<T extends Exclude<RecordType, "settings">>(type: T, target: FormTarget<T>) {
   const { store } = useLedgerUI();
@@ -41,7 +42,7 @@ const dueLabels = {
 };
 type DueChoice = keyof typeof dueLabels;
 
-export function PurchaseForm({ personId, ...target }: FormTarget<"purchase"> & { personId?: string }) {
+export function PurchaseForm({ personId, originalDate, ...target }: DatedFormTarget<"purchase"> & { personId?: string }) {
   const { snapshot } = useLedgerUI();
   const today = snapshot.ledger!.today;
   const { initial } = target;
@@ -177,7 +178,8 @@ export function PurchaseForm({ personId, ...target }: FormTarget<"purchase"> & {
     </>}
     <details className="optional-fields">
       <summary>Purchase date and note</summary>
-      <DateField label="Purchase date" value={date.date} onChange={setBoughtOn} max={today} />
+      <DateField label="Purchase date" value={date.date} onChange={setBoughtOn}
+        max={eventDateMax(date.date, today, originalDate === undefined ? initial?.boughtOn : originalDate)} />
       <label className="field">Note<textarea value={note} onChange={event => setNote(event.target.value)} /></label>
     </details>
     {date.backdated && <p className="notice" role="status">Purchase date moved back to {displayDate(date.date)} to match the first due date.</p>}
@@ -204,9 +206,9 @@ export function PersonForm(target: FormTarget<"person">) {
 }
 
 type CashTarget =
-  | ({ type: "payment"; personId: string } & FormTarget<"payment">)
-  | ({ type: "payout"; personId: string } & FormTarget<"payout">)
-  | ({ type: "refund"; purchaseId: string } & FormTarget<"refund">);
+  | ({ type: "payment"; personId: string } & DatedFormTarget<"payment">)
+  | ({ type: "payout"; personId: string } & DatedFormTarget<"payout">)
+  | ({ type: "refund"; purchaseId: string } & DatedFormTarget<"refund">);
 
 export function CashForm(target: CashTarget) {
   const { snapshot, store } = useLedgerUI();
@@ -219,7 +221,9 @@ export function CashForm(target: CashTarget) {
   const chips = target.type === "payment" && !initial && person
     ? paymentChips(snapshot.ledger!, snapshot.records, person.id).filter(chip => chip.amountMinor <= MAX_AMOUNT_MINOR) : [];
   const [amount, setAmount] = useState(initial ? formatAmountInput(initial.amountMinor) : chips.length ? formatAmountInput(chips[0].amountMinor) : "");
-  const [date, setDate] = useState(initial ? "paidOn" in initial ? initial.paidOn : "refundedOn" in initial ? initial.refundedOn : initial.paidOutOn : today);
+  const initialDate = initial && ("paidOn" in initial ? initial.paidOn : "refundedOn" in initial ? initial.refundedOn : initial.paidOutOn);
+  const originalDate = target.originalDate === undefined ? initialDate : target.originalDate;
+  const [date, setDate] = useState(initialDate ?? today);
   const [note, setNote] = useState(initial?.note ?? "");
   const [token, setToken] = useState(target.token);
   const save = useSave(target.onSaved);
@@ -287,7 +291,7 @@ export function CashForm(target: CashTarget) {
       </Chip>)}</div>
     </fieldset>}
     <AmountField label="Amount" value={amount} onChange={setAmount} />
-    <DateField label="Date" value={date} onChange={setDate} min={purchase?.boughtOn} max={today} />
+    <DateField label="Date" value={date} onChange={setDate} min={purchase?.boughtOn} max={eventDateMax(date, today, originalDate)} />
     <label className="field">Note (optional)<textarea value={note} onChange={event => setNote(event.target.value)} /></label>
     {target.type === "payment" && <p className="hint">Payments first cover any cash shortfall, then dated amounts starting with the earliest due, then purchases without a date. Anything left becomes credit.</p>}
   </SaveForm>;

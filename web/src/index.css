@@ -122,6 +122,8 @@ ul { padding: 0; list-style: none; }
 .brand { display: inline-flex; align-items: center; gap: 0.65rem; font-size: 1.14rem; font-weight: 750; letter-spacing: -0.04em; border-radius: 0.5rem; }
 .brand img { border-radius: 0.55rem; }
 .workspace { display: grid; gap: 1.65rem; padding-top: 1.25rem; padding-bottom: calc(7rem + env(safe-area-inset-bottom)); }
+.home-layout { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100dvh; }
+.home-layout .workspace { align-content: start; overflow-y: auto; padding-bottom: 1.25rem; }
 .menu { position: relative; }
 .menu summary { list-style: none; }
 .menu summary::-webkit-details-marker { display: none; }
@@ -262,19 +264,13 @@ progress::-moz-progress-bar { background: var(--paid); border-radius: 99px; }
 .secondary { background: var(--surface); border-color: var(--line); }
 .quiet { color: var(--ink-2); }
 .secondary:hover:not(:disabled), .quiet:hover:not(:disabled) { background: var(--surface-2); }
-.fab-wrap {
-  position: fixed;
-  display: flex;
-  z-index: 2;
-  inset-inline: 0;
-  bottom: calc(0.9rem + env(safe-area-inset-bottom));
-  margin-inline: auto;
-  width: min(100%, var(--shell));
-  padding-right: max(1rem, env(safe-area-inset-right));
-  justify-content: end;
-  pointer-events: none;
+.home-actions {
+  padding-block: 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
 }
-.fab { min-height: 3.15rem; padding-inline: 1.15rem; border-radius: 1rem; box-shadow: var(--shadow); pointer-events: auto; }
+.home-actions .shell { display: flex; justify-content: end; }
+.home-actions .button { min-height: 3.15rem; padding-inline: 1.15rem; }
 .sync-banner { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.55rem; border: 1px solid var(--line); border-radius: 0.85rem; background: var(--surface); padding: 0.75rem; color: var(--ink-2); }
 
 .sheet {

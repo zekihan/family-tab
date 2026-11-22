@@ -43,7 +43,7 @@ function PersonRow({ person }: { person: Person }) {
   </a></li>;
 }
 
-export function Home({ addPurchase }: { addPurchase: () => void }) {
+export function Home() {
   const { snapshot } = useLedgerUI();
   const { ledger, records } = snapshot;
   const { home, homeOrder, comingUp, today } = ledger!;
@@ -77,7 +77,6 @@ export function Home({ addPurchase }: { addPurchase: () => void }) {
           </a></li>)}</ul> : <p className="empty">Nothing is due in the next month.</p>}
       </section>
     </div>
-    <div className="fab-wrap"><button className="button primary fab" onClick={addPurchase}>+ Add purchase</button></div>
   </>;
 }
 

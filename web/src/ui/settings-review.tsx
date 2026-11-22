@@ -117,7 +117,8 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
   const { store, snapshot } = useLedgerUI();
   const { op } = item;
   if (op.kind === "delete") return null;
-  const original = item.server ?? item.local;
+  const server = item.server;
+  const original = server ?? item.local;
   const initial: Record<string, unknown> = { ...original, ...(op.kind === "update" ? op.patch : op.record) };
   const base = { id: op.recordId, version: original?.version ?? "" };
   const text = (key: string) => typeof initial[key] === "string" ? initial[key] : null;
@@ -131,7 +132,7 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
   const purchaseId = text("purchaseId") ?? "";
   const cash = { ...base, amountMinor: integer("amountMinor") ?? 0, note: text("note") };
   const commit = (fields: Record<string, unknown>): Promise<SaveResult> => {
-    const patch = item.server ? patchBetween({ ...item.server }, fields) : fields;
+    const patch = server ? patchBetween({ ...server }, fields) : fields;
     return store.editAndResubmit(op.id, patch, item);
   };
   const target = { commit, onSaved };
@@ -142,16 +143,19 @@ function ReviewEditor({ item, onSaved }: { item: ReviewItem; onSaved: () => void
     case "person": return <PersonForm {...target} initial={{
       ...base, name: text("name") ?? "", payday: integer("payday"), archived: initial.archived === true,
     }} />;
-    case "purchase": return <PurchaseForm {...target} initial={{
+    case "purchase": return <PurchaseForm {...target} originalDate={server && "boughtOn" in server ? server.boughtOn : null} initial={{
       ...base, personId, item: text("item") ?? "", totalMinor: integer("totalMinor") ?? 0,
       plan: initial.plan === "installments" ? "installments" : "once", boughtOn: date("boughtOn") ?? today,
       dueDate: date("dueDate"), count: integer("count"), firstDue: date("firstDue"), dueDay: integer("dueDay"), note: text("note"),
     }} />;
     case "payment": return <CashForm {...target} type="payment" personId={personId}
+      originalDate={server && "paidOn" in server ? server.paidOn : null}
       initial={{ ...cash, personId, paidOn: date("paidOn") ?? today }} />;
     case "payout": return <CashForm {...target} type="payout" personId={personId}
+      originalDate={server && "paidOutOn" in server ? server.paidOutOn : null}
       initial={{ ...cash, personId, paidOutOn: date("paidOutOn") ?? today }} />;
     case "refund": return <CashForm {...target} type="refund" purchaseId={purchaseId}
+      originalDate={server && "refundedOn" in server ? server.refundedOn : null}
       initial={{ ...cash, purchaseId, refundedOn: date("refundedOn") ?? today }} />;
   }
 }

@@ -83,6 +83,7 @@ function Workspace() {
     previousPath.current = path;
     setEntry(null);
     window.scrollTo(0, 0);
+    main.current?.scrollTo(0, 0);
     main.current?.querySelector("h1")?.focus();
   }, [path]);
 
@@ -94,7 +95,7 @@ function Workspace() {
   const personId = routePerson(path);
   const personArchived = !!personId && snapshot.records.people.find(person => person.id === personId)?.archived;
   const home = path === "/";
-  return <>
+  return <div className={home ? "home-layout" : undefined}>
     <header className="app-header">
       <div className="shell header-content">
         <a className="brand" href="#/"><img src="/icon.svg" alt="" width="34" height="34" /> Family Tab</a>
@@ -108,16 +109,21 @@ function Workspace() {
     </header>
     <main className="shell workspace" ref={main}>
       <SyncBanner />
-      {home ? <Home addPurchase={() => open({ kind: "purchase" })} />
+      {home ? <Home />
         : path === "/archive" ? <Archive />
         : path === "/settings" ? <SettingsPage />
         : path === "/review" ? <Review />
         : personId ? <PersonPage key={personId} id={personId} open={open} />
         : <section className="section"><h1 tabIndex={-1}>Page unavailable</h1><a className="button secondary" href="#/">Back to Home</a></section>}
     </main>
+    {home && <div className="home-actions">
+      <div className="shell">
+        <button className="button primary" onClick={() => open({ kind: "purchase" })}>+ Add purchase</button>
+      </div>
+    </div>}
     {entry?.path === path && <EntrySheet action={entry.action} token={entry.token} onClose={() => setEntry(null)} />}
     <UndoToasts />
-  </>;
+  </div>;
 }
 
 function Gate({ title, children }: { title: string; children?: React.ReactNode }) {
