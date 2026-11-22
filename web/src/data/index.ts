@@ -6,14 +6,14 @@ import * as ledger from "../ledger/index.ts";
 import type { LedgerView, RuleError } from "../ledger/index.ts";
 import { SETTINGS_ID } from "../types.ts";
 import type {
-  BackupFile, LedgerRecord, Me, Operation, Receipt, RecordByType, Records, RecordType, RestoreRequest,
+  BackupFile, LedgerRecord, Me, Operation, Receipt, RecordByType, Records, RecordType, RestoreRequest, Snapshot,
 } from "../types.ts";
-import { AuthError, createApi, NetworkError } from "./api.ts";
+import { AuthError, createApi, NetworkError, ServerError } from "./api.ts";
 import { backupRecords, countRecords, parseBackup } from "./backup.ts";
 import { changeLocal, draft, finishLogout, LocalStateError, openLedger, purge, readLocal } from "./db.ts";
 import type { LedgerDB, LocalState } from "./db.ts";
 import { withSyncLock } from "./lock.ts";
-import { affectedPeople, applyOperation, emptyRecords, findRecord, patchFields, replay, unappliedOperations } from "./model.ts";
+import { affectedPeople, applyOperation, emptyRecords, findRecord, patchFields, related, replay, unappliedOperations } from "./model.ts";
 import type { QueueEntry } from "./model.ts";
 import { ensureLatestApp } from "./service-worker.ts";
 import { assertSession, importUnapplied, syncLedger } from "./sync.ts";
@@ -46,6 +46,8 @@ export interface ReviewItem {
   blockingIds: string[];
   blocking: LedgerRecord[];
   waiting: Operation[];
+  /** Ledger generation when the server version was displayed. */
+  generation?: string;
 }
 
 export interface StoreSnapshot {
@@ -111,6 +113,15 @@ function invalid(reason: string, code: RuleError["code"] = "invalid"): SaveResul
 function noVersion(record: LedgerRecord) {
   const { version: _version, ...value } = record;
   return value;
+}
+
+function reviewServer(snapshot: Snapshot | undefined, row: Extract<QueueEntry, { state: "needsReview" }>) {
+  const { op, receipt } = row;
+  if (receipt?.status === "conflict" &&
+    (!snapshot || (snapshot.generation === receipt.generation && snapshot.revision < receipt.revision))) {
+    return receipt.current;
+  }
+  return findRecord(snapshot ?? emptyRecords, op.recordType, op.recordId);
 }
 
 type ReviewAction = "keepServer" | "keepLocal" | "discard" | "editAndResubmit" | "confirmAlreadyReturned";
@@ -185,13 +196,12 @@ export function createStore(options: StoreOptions = {}) {
     const reviewItems = state.queue.flatMap(row => {
       if (row.state !== "needsReview") return [];
       const op = row.op;
-      const blockingIds = row.receipt?.blocking ?? [];
+      const blockingIds = row.receipt?.blocking ?? row.ruleError?.blocking ?? [];
       const all = state.snapshot ?? emptyRecords;
-      const server = row.receipt?.status === "conflict"
-        ? row.receipt.current : findRecord(all, op.recordType, op.recordId);
       return [{
-        op, reason: row.reason, code: row.receipt?.code ?? null, restore: !!row.restore,
-        local: row.local, server, blockingIds,
+        op, reason: row.reason, code: row.receipt?.code ?? row.ruleError?.code ?? null, restore: !!row.restore,
+        local: row.local, server: reviewServer(state.snapshot, row), blockingIds,
+        generation: state.snapshot?.generation,
         blocking: [all.settings, ...all.people, ...all.purchases, ...all.payments, ...all.refunds, ...all.payouts]
           .filter((record): record is LedgerRecord => !!record && blockingIds.includes(record.id)),
         waiting: state.queue.filter(candidate => {
@@ -288,20 +298,31 @@ export function createStore(options: StoreOptions = {}) {
     announce("restoreEnd");
   }
 
-  // An interrupted response can hide an applied restore. Look up the receipt before
-  // syncing new changes so its unapplied records are recovered without another write.
-  async function recoverRestore(state: LocalState, currentEpoch: string | undefined) {
+  // Recover a committed restore's unapplied work by receipt. An unchanged revision
+  // also lets sync finish the already confirmed request with its original ID.
+  async function recoverRestore(state: LocalState, currentEpoch: string | undefined, retry = false) {
     const request = state.meta.restore?.request;
     if (!request) return false;
-    assertSession(await readLocal(requireDB()), currentEpoch);
+    const database = requireDB();
+    assertSession(await readLocal(database), currentEpoch);
     const { receipts } = await api.receipts([request.opId]);
     const receipt = receipts.find(receipt => receipt.opId === request.opId);
-    if (!receipt) return false;
-    if (receipt.status === "applied") {
+    if (receipt?.status === "applied") {
       await loadRestoredSnapshot(receipt, currentEpoch);
       announce("restoreEnd");
-    } else {
+    } else if (receipt) {
       await releaseRestore(currentEpoch, false);
+    } else {
+      if (!retry || (await api.snapshot()).revision !== request.expectedRevision) return false;
+      const retrying = await changeLocal(database, currentEpoch, local => {
+        if (!local.meta.restore || local.queue.length) return false;
+        local.meta.restore.active = true;
+        return true;
+      });
+      if (!retrying) return false;
+      announce("restoreStart");
+      await refresh();
+      await runRestore(request, currentEpoch);
     }
     return true;
   }
@@ -327,7 +348,7 @@ export function createStore(options: StoreOptions = {}) {
         delete current.meta.needsSignIn;
       }, { duringRestore: true });
       needsSignIn = false;
-      if (state.meta.restore?.attempted) await recoverRestore(state, currentEpoch);
+      if (state.meta.restore?.attempted) await recoverRestore(state, currentEpoch, true);
       await syncLedger(database, api, currentEpoch, now, refresh);
       if (state.meta.restore?.attempted) {
         const fresh = await readLocal(database);
@@ -465,6 +486,7 @@ export function createStore(options: StoreOptions = {}) {
     try {
       const result = await changeLocal(requireDB(), epoch, change);
       if (result.status === "saved") await changed();
+      if (result.status === "stale") await refresh();
       return result;
     } catch (error) {
       if (!(error instanceof LocalStateError)) throw error;
@@ -539,8 +561,9 @@ export function createStore(options: StoreOptions = {}) {
   /** Cancel a deletion within its undo window, including pending deletions of its parents. */
   async function undo(opId: string): Promise<boolean> {
     const removed = await changeLocal(requireDB(), epoch, state => {
+      const time = now();
       const row = state.queue.find(row => row.op.id === opId);
-      if (!row || row.state !== "pendingUndo" || row.deadline <= now()) return false;
+      if (!row || row.state !== "pendingUndo" || row.deadline <= time) return false;
       const op = row.op;
       if (op.kind !== "delete") return false;
       const purchaseId = op.recordType === "refund" && "purchaseId" in op.preImage ? op.preImage.purchaseId : null;
@@ -548,10 +571,27 @@ export function createStore(options: StoreOptions = {}) {
         entry.op.recordType === "purchase" && entry.op.recordId === purchaseId);
       const child = purchase?.op ?? op;
       const personId = child.kind === "delete" && "personId" in child.preImage ? child.preImage.personId : null;
-      state.queue = state.queue.filter(entry => entry !== row && !(
+      const cancelled = state.queue.filter(entry => entry === row ||
         entry === purchase || (entry.state === "pendingUndo" && entry.op.recordType === "person" &&
           entry.op.recordId === personId)
-      ));
+      );
+      state.queue = state.queue.filter(entry => !cancelled.includes(entry));
+      // Validate related changes in replay order so a newly invalid change
+      // holds its dependents out of the ledger before it is published.
+      const synced = state.snapshot ?? emptyRecords;
+      const affected = cancelled.map(entry => ({
+        ...entry, people: [...entry.people, ...affectedPeople(synced, entry.op)],
+      }));
+      const { excluded } = replay(synced, state.queue, time, (before, after, entry) => {
+        if (!affected.some(earlier => earlier.order < entry.order && related(earlier, entry))) return null;
+        affected.push(entry);
+        const zone = after.settings?.timeZone ?? before.settings?.timeZone ?? "UTC";
+        const error = rules.validateChange(before, after, entry.op, rules.todayIn(zone, time));
+        return error && { ...error, reason: `Undoing the deletion made this change invalid. ${error.reason}` };
+      });
+      const held = new Map(excluded.filter(entry => entry.state === "needsReview" && entry.ruleError)
+        .map(entry => [entry.op.id, entry]));
+      state.queue = state.queue.map(entry => held.get(entry.op.id) ?? entry);
       return true;
     });
     if (removed) await changed();
@@ -562,11 +602,16 @@ export function createStore(options: StoreOptions = {}) {
     opId: string, action: ReviewAction, edited?: Record<string, unknown>, opened?: ReviewItem,
   ): Promise<SaveResult> {
     const reviewed = opened ?? snapshot.reviewItems.find(row => row.op.id === opId);
+    const reviewedGeneration = reviewed?.generation ?? snapshot.generation;
     return localSave(state => {
       const row = state.queue.find(row => row.op.id === opId);
       if (!row || row.state !== "needsReview" || !state.snapshot || reviewed?.op.id !== opId) return invalid("Open Review again.");
       const original = row.op;
       const generation = state.snapshot.generation;
+      const current = reviewServer(state.snapshot, row);
+      if (action !== "discard" && (reviewedGeneration !== generation || reviewed.server?.version !== current?.version)) {
+        return { status: "stale", current, generation };
+      }
       const remaining = state.queue.filter(entry => entry !== row);
       const done: SaveResult = { status: "saved", opId, recordId: original.recordId };
       if (action === "discard" || action === "keepServer") {
@@ -577,7 +622,6 @@ export function createStore(options: StoreOptions = {}) {
         return invalid("Only a payout can be confirmed as money already returned.");
       }
       const before = replay(state.snapshot, remaining.filter(entry => entry.order < row.order), now()).records;
-      const current = reviewed.server;
       const base = {
         ...newOperation(generation, original.recordType, original.recordId),
         ...(action === "confirmAlreadyReturned" || original.alreadyReturned ? { alreadyReturned: true } : {}),
@@ -606,6 +650,12 @@ export function createStore(options: StoreOptions = {}) {
       }
       return result;
     });
+  }
+
+  function keepServer(id: string): Promise<SaveResult>;
+  function keepServer(id: string, opened?: ReviewItem): Promise<SaveResult>;
+  function keepServer(id: string, opened?: ReviewItem) {
+    return review(id, "keepServer", undefined, opened);
   }
 
   /** Warn about pending work, then atomically purge private data and arrange server logout. */
@@ -663,19 +713,22 @@ export function createStore(options: StoreOptions = {}) {
     };
   }
 
-  async function runRestore(request: RestoreRequest, generation: string, currentEpoch: string | undefined) {
+  async function runRestore(request: RestoreRequest, currentEpoch: string | undefined, generation?: string) {
     let rejected = false;
     try {
       const database = requireDB();
-      const current = await api.snapshot();
-      if (current.generation !== generation || current.revision !== request.expectedRevision) {
-        throw new Error("The ledger changed. Preview the backup again.");
+      if (generation !== undefined) {
+        const current = await api.snapshot();
+        if (current.generation !== generation || current.revision !== request.expectedRevision) {
+          throw new Error("The ledger changed. Preview the backup again.");
+        }
       }
       await changeLocal(database, currentEpoch, state => {
         if (state.meta.restore) state.meta.restore.attempted = true;
       }, { duringRestore: true });
       const restored = await api.restore(request).catch(error => {
-        rejected = error instanceof AuthError;
+        rejected = (generation !== undefined && error instanceof AuthError) ||
+          (error instanceof ServerError && error.status === 413);
         throw error;
       });
       if (restored.status === "rejected") {
@@ -722,7 +775,7 @@ export function createStore(options: StoreOptions = {}) {
       });
       announce("restoreStart");
       await refresh();
-      await runRestore(request, preview.generation, currentEpoch);
+      await runRestore(request, currentEpoch, preview.generation);
     });
   }
 
@@ -751,8 +804,8 @@ export function createStore(options: StoreOptions = {}) {
     /** True when no deletion affecting this person is inside its undo window. Check credit separately. */
     canRecordCashReturned: (personId: string) => !snapshot.pendingUndo.some(row =>
       row.deadline > now() && row.personIds.includes(personId)),
-    /** Resolve the displayed review item by its original operation ID. */
-    keepServer: (id: string) => review(id, "keepServer"),
+    /** Pass the displayed item to guard the decision against a newer version. */
+    keepServer,
     /** Pass the captured item when the form can stay open across a refresh. */
     keepLocal: (id: string, opened?: ReviewItem) => review(id, "keepLocal", undefined, opened),
     discard: (id: string) => review(id, "discard"),

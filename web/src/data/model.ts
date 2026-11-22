@@ -1,6 +1,7 @@
 import type {
   LedgerRecord, Operation, Receipt, RecordByType, Records, RecordType, UnappliedOperation,
 } from "../types.ts";
+import type { RuleError } from "../ledger/index.ts";
 
 export const emptyRecords: Records = {
   settings: null, people: [], purchases: [], payments: [], refunds: [], payouts: [],
@@ -53,7 +54,7 @@ type QueueState =
   | { state: "sendable" }
   | { state: "pendingUndo"; deadline: number }
   | { state: "acked"; receipt: Receipt }
-  | { state: "needsReview"; reason: string; receipt?: Receipt; restore?: boolean };
+  | { state: "needsReview"; reason: string; receipt?: Receipt; restore?: boolean; ruleError?: RuleError };
 
 export type QueueEntry = QueueState & {
   order: number;
@@ -100,7 +101,10 @@ export function related(earlier: QueueEntry, later: QueueEntry): boolean {
   return earlier.people.some(person => later.people.includes(person));
 }
 
-export function replay(snapshot: Records, queue: QueueEntry[], now: number) {
+export function replay(
+  snapshot: Records, queue: QueueEntry[], now: number,
+  validate?: (before: Records, after: Records, row: QueueEntry) => RuleError | null,
+) {
   let records = snapshot;
   let context = snapshot;
   const excluded: QueueEntry[] = [];
@@ -115,20 +119,26 @@ export function replay(snapshot: Records, queue: QueueEntry[], now: number) {
       ...entry,
       people: [...new Set([...entry.people, ...affectedPeople(context, op)])],
     };
+    context = applyOperation(context, op);
     const review = excluded.filter(earlier => related(earlier, row));
     if (review.length) waiting.set(op.id, review.map(earlier => earlier.op.id));
     if (row.state === "needsReview" || review.length) {
       excluded.push(row);
-    } else {
-      records = applyOperation(records, op);
-      if ((row.state === "pendingUndo" && row.deadline > now) || held.some(earlier => related(earlier, row))) {
-        held.push(row);
-      } else if (row.state === "sendable" || row.state === "pendingUndo") {
-        items.push({ op, deps: sent.filter(earlier => related(earlier, row)).map(earlier => earlier.op.id) });
-        sent.push(row);
-      }
+      continue;
     }
-    context = applyOperation(context, op);
+    const after = applyOperation(records, op);
+    const error = row.state === "acked" ? null : validate?.(records, after, row);
+    if (error) {
+      excluded.push({ ...row, state: "needsReview", reason: error.reason, ruleError: error });
+      continue;
+    }
+    records = after;
+    if ((row.state === "pendingUndo" && row.deadline > now) || held.some(earlier => related(earlier, row))) {
+      held.push(row);
+    } else if (row.state === "sendable" || row.state === "pendingUndo") {
+      items.push({ op, deps: sent.filter(earlier => related(earlier, row)).map(earlier => earlier.op.id) });
+      sent.push(row);
+    }
   }
   return { records, excluded, waiting, items };
 }

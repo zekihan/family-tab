@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { changeLocal, openLedger, readLocal } from "../../src/data/db.ts";
 import { applyOperation } from "../../src/data/model.ts";
-import type { Operation } from "../../src/types.ts";
+import * as ledger from "../../src/ledger/index.ts";
+import type { Operation, RestoreRequest } from "../../src/types.ts";
 import { backup, deferred, harness, initial, payment, person, purchase, refund, token } from "./helpers.ts";
 
 test("offline edits are persisted and stale form saves return the current record", async () => {
@@ -78,6 +79,34 @@ test("undoing a purchase, payment or payout deletion also restores its person", 
   }
 });
 
+test("undoing a refund deletion holds an invalid price change and its dependents", async () => {
+  const { store, clock } = harness({ rules: ledger });
+  await store.start();
+  clock.online = false;
+  const removal = await store.deleteRecord("refund", refund.id, token(store, refund));
+  const reduction = await store.updateRecord("purchase", purchase.id, token(store, purchase), { totalMinor: 5 });
+  const waiting = await store.createRecord("payment", payment());
+  const independent = await store.createRecord("payment", payment("b"));
+  assert.equal(removal.status, "saved");
+  assert.equal(reduction.status, "saved");
+  assert.equal(waiting.status, "saved");
+  assert.equal(independent.status, "saved");
+
+  assert.equal(await store.undo(removal.opId), true);
+  const { records, reviewItems } = store.getSnapshot();
+  assert.deepEqual(records.refunds, [refund]);
+  assert.deepEqual(records.purchases, [purchase]);
+  assert.deepEqual(records.payments.map(row => row.id), [independent.recordId]);
+  assert.equal(reviewItems[0].op.id, reduction.opId);
+  assert.equal(reviewItems[0].code, "refunds_exceed_total");
+  assert.match(reviewItems[0].reason, /undoing/i);
+  assert.deepEqual(reviewItems[0].waiting.map(op => op.id), [waiting.opId]);
+  const exported = await store.exportBackup();
+  assert.equal(ledger.validateRecords(records, "2026-11-22"), null);
+  assert.deepEqual(exported.unapplied.map(row => [row.op.id, row.dependencies]),
+    [[reduction.opId, []], [waiting.opId, [reduction.opId]]]);
+});
+
 test("applied ops clear; rejection and conflict block their dependents while unrelated ops sync", async () => {
   const { store, clock, server } = harness();
   await store.start();
@@ -143,6 +172,41 @@ test("a missing server record can be recreated with its original ID", async () =
   assert.equal((await store.keepLocal(saved.opId)).status, "saved");
   await store.syncNow();
   assert.equal(server.snapshot.people.find(row => row.id === person.id)?.name, "Edited");
+});
+
+test("conflict review uses the latest snapshot and guards both actions against a stale display", async () => {
+  const { store, clock, server, createAnother } = harness();
+  const original = { ...payment(), id: "payment", version: "payment-v1" };
+  const firstRemote = { ...original, version: "payment-v2", amountMinor: 200 };
+  const latest = { ...original, version: "payment-v3", amountMinor: 300 };
+  server.replace({ ...initial(), payments: [original] });
+  await store.start();
+  clock.online = false;
+  const saved = await store.updateRecord("payment", original.id, token(store, original), { amountMinor: 150 });
+  assert.equal(saved.status, "saved");
+  server.replace({ ...server.snapshot, revision: 4, payments: [firstRemote] });
+  server.result.decide = op => op.id === saved.opId
+    ? { status: "conflict", code: "conflict", current: firstRemote } : undefined;
+  clock.online = true;
+  await store.syncNow();
+  const [opened] = store.getSnapshot().reviewItems;
+  assert.deepEqual(opened.server, firstRemote);
+
+  server.replace({ ...server.snapshot, revision: 5, payments: [latest] });
+  await createAnother().start();
+  const staleServer = await store.keepServer(saved.opId);
+  assert.deepEqual(staleServer, { status: "stale", current: latest, generation: initial().generation });
+  const [current] = store.getSnapshot().reviewItems;
+  assert.deepEqual(current.server, latest);
+  const staleLocal = await store.keepLocal(saved.opId, opened);
+  assert.deepEqual(staleLocal, staleServer);
+  assert.deepEqual(await store.keepServer(saved.opId, opened), staleServer);
+  assert.equal(server.operations.length, 1);
+  assert.equal((await store.keepLocal(saved.opId, current)).status, "saved");
+  await store.syncNow();
+  const sent = server.operations.at(-1)?.items[0].op;
+  assert.equal(sent?.kind === "update" && sent.baseVersion, latest.version);
+  assert.equal(server.snapshot.payments[0].amountMinor, 150);
 });
 
 test("held operations enter restore review and operations reflected by the new generation disappear", async () => {
@@ -383,6 +447,98 @@ test("an interrupted restore releases saves and recovers unapplied work using it
   assert.equal(restores, 1);
   assert.equal(store.getSnapshot().generation, server.snapshot.generation);
   assert.deepEqual(store.getSnapshot().reviewItems.map(row => row.op.id), [op.id]);
+});
+
+test("reconnecting retries a restore that never reached the server with the original operation ID", async () => {
+  const { store, server, clock, createAnother } = harness();
+  await store.start();
+  const op: Operation = { id: "unapplied", recordType: "person", recordId: person.id, kind: "update",
+    baseVersion: person.version, generation: initial().generation, createdAt: "2026-11-22T00:00:00Z",
+    patch: { name: "From backup" } };
+  const preview = await store.previewRestore(backup([{ order: 0, op, dependencies: [], reason: null }]));
+  server.hook.fetch = async path => {
+    if (path === "/api/restore") {
+      clock.online = false;
+      throw new TypeError("Disconnected before sending");
+    }
+    return undefined;
+  };
+  await assert.rejects(store.commitRestore(preview), /Could not reach/);
+  assert.equal(store.getSnapshot().sync.restoreInProgress, false);
+  assert.equal(server.snapshot.revision, preview.revision);
+
+  server.hook.fetch = undefined;
+  clock.online = true;
+  const reloaded = createAnother();
+  await reloaded.start();
+  const attempts = server.calls.filter(call => call.path === "/api/restore").map(call => call.body as RestoreRequest);
+  assert.equal(attempts.length, 2);
+  assert.deepEqual(attempts[1], attempts[0]);
+  assert.equal(server.snapshot.revision, preview.revision + 1);
+  assert.equal(reloaded.getSnapshot().sync.restoreInProgress, false);
+  assert.deepEqual(reloaded.getSnapshot().reviewItems.map(row => row.op.id), [op.id]);
+  await reloaded.discard(op.id);
+  await reloaded.commitRestore(await reloaded.previewRestore(backup()));
+});
+
+test("sync bounds request bytes and item count and keeps earlier batches after a disconnect", async () => {
+  const { store, clock, server, dbName } = harness();
+  await store.start();
+  clock.online = false;
+  const db = await openLedger(dbName);
+  const large = payment();
+  large.note = "🧾".repeat(500);
+  const ids: string[] = Array.from({ length: 920 }, () => crypto.randomUUID());
+  await changeLocal(db, undefined, state => {
+    for (const [index, id] of ids.entries()) {
+      const fields = index < 700 ? large : payment("b");
+      const op: Operation = { kind: "create", recordType: "payment", id, recordId: id,
+        generation: initial().generation, createdAt: "2026-11-22T00:00:00Z", record: { ...fields, id } };
+      state.queue.push({ state: "sendable", op, order: index, people: [fields.personId],
+        local: { ...fields, id, version: id } });
+    }
+  });
+
+  const posted: string[][] = [];
+  let rejection: string | undefined;
+  server.result.decide = op => op.id === rejection ? { status: "rejected", code: "invalid" } : undefined;
+  server.hook.fetch = async path => {
+    if (path !== "/api/sync/ops") return undefined;
+    const body = server.calls.at(-1)!.body as (typeof server.operations)[number];
+    const bytes = Buffer.byteLength(JSON.stringify(body));
+    if (bytes > 8 * 1024 * 1024) return Response.json({ error: "body_too_large" }, { status: 413 });
+    assert.ok(bytes <= 1024 * 1024);
+    assert.ok(body.items.length <= 200);
+    const selected = new Set<string>();
+    for (const { op, deps } of body.items) {
+      assert.ok(deps.every(dep => selected.has(dep) || server.receipts.get(dep)?.status === "applied"));
+      selected.add(op.id);
+    }
+    posted.push([...selected]);
+    if (posted.length === 2) throw new TypeError("Disconnected during second batch");
+    if (posted.length === 3) rejection = body.items.at(-1)!.op.id;
+    return undefined;
+  };
+
+  clock.online = true;
+  await store.syncNow();
+  assert.equal(posted.length, 2);
+  assert.ok(posted[0].length < 200, "UTF-8 byte limit splits the first batch");
+  assert.deepEqual(posted[0], ids.slice(0, posted[0].length));
+  assert.deepEqual(server.snapshot.payments.map(row => row.id), posted[0]);
+  assert.deepEqual((await readLocal(db)).queue.filter(row => row.state === "acked").map(row => row.op.id), posted[0]);
+  assert.match(store.getSnapshot().sync.lastError ?? "", /Could not reach/);
+
+  await store.syncNow();
+  assert.deepEqual(posted[2], posted[1]);
+  assert.deepEqual(posted[2], ids.slice(posted[0].length, posted[0].length + posted[2].length));
+  assert.ok(rejection);
+  assert.deepEqual(posted.slice(3).flat(), ids.slice(700));
+  assert.equal(posted[3].length, 200);
+  assert.equal(store.getSnapshot().sync.lastError, null);
+  assert.equal(store.getSnapshot().reviewItems[0].op.id, rejection);
+  assert.equal(store.getSnapshot().reviewItems[0].waiting.length, 699 - ids.indexOf(rejection));
+  assert.equal(server.snapshot.payments.length, posted[0].length + posted[2].length - 1 + 220);
 });
 
 test("a second restore preserves unapplied work when the first commits after a missing receipt", async () => {

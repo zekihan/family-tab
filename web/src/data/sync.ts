@@ -1,9 +1,13 @@
-import type { OpResult, Receipt, Records, Snapshot } from "../types.ts";
+import type { OpResult, OpsRequest, OpsResponse, Receipt, Records, Snapshot } from "../types.ts";
 import type { Api } from "./api.ts";
 import { changeLocal, LocalStateError, readLocal } from "./db.ts";
 import type { LedgerDB, LocalState } from "./db.ts";
 import { affectedPeople, applyOperation, emptyRecords, findRecord, reflects, replay } from "./model.ts";
 import type { QueueEntry } from "./model.ts";
+
+const MAX_BATCH_BYTES = 1024 * 1024;
+const MAX_BATCH_ITEMS = 200;
+const encoder = new TextEncoder();
 
 export function assertSession(state: LocalState, epoch: string | undefined) {
   if (state.meta.signedOut || state.meta.epoch !== epoch) throw new LocalStateError("signedOut");
@@ -11,7 +15,7 @@ export function assertSession(state: LocalState, epoch: string | undefined) {
 
 function restoreReview(row: QueueEntry): Extract<QueueEntry, { state: "needsReview" }> {
   if (row.state === "needsReview" && row.restore) return row;
-  return { ...row, state: "needsReview", restore: true, receipt: undefined,
+  return { ...row, state: "needsReview", restore: true, receipt: undefined, ruleError: undefined,
     reason: "The ledger was restored. Review this change against the restored ledger." };
 }
 
@@ -46,6 +50,31 @@ function isAhead(receipts: Receipt[], snapshot: Snapshot) {
   return receipts.some(receipt => receipt.generation === snapshot.generation && receipt.revision > snapshot.revision);
 }
 
+function nextBatch(state: LocalState, checked: ReadonlySet<string>, now: number): OpsRequest["items"] {
+  const items: OpsRequest["items"] = [];
+  const selected = new Set<string>();
+  let bytes = '{"items":[]}'.length;
+  for (const item of replay(state.snapshot ?? emptyRecords, state.queue, now).items) {
+    if (items.length === MAX_BATCH_ITEMS) break;
+    // Replay leaves applied operations out of deps. Every remaining dependency
+    // must be selected here, including when new work was queued during the cycle.
+    if (!checked.has(item.op.id) || !item.deps.every(dep => selected.has(dep))) continue;
+    const size = encoder.encode(JSON.stringify(item)).length;
+    if (bytes + size + (items.length ? 1 : 0) > MAX_BATCH_BYTES) {
+      if (items.length) break;
+      const reason = "This change is too large to sync. Edit it or discard it.";
+      state.queue = state.queue.map(row => row.op.id === item.op.id
+        ? { ...row, state: "needsReview", reason, ruleError: { code: "invalid", reason, blocking: [] } }
+        : row);
+      continue;
+    }
+    bytes += size + (items.length ? 1 : 0);
+    items.push(item);
+    selected.add(item.op.id);
+  }
+  return items;
+}
+
 /** A cycle runs inside the device lock. Each local commit checks its original session. */
 export async function syncLedger(
   db: LedgerDB, api: Api, epoch: string | undefined, now: () => number, publish: () => Promise<void>,
@@ -54,23 +83,19 @@ export async function syncLedger(
   assertSession(state, epoch);
   const checked = new Set(state.queue.map(row => row.op.id));
   const { generation, receipts } = await api.receipts([...checked]);
-  const items = await changeLocal(db, epoch, current => {
-    observeResults(current, generation, receipts);
-    const selected = new Set<string>();
-    return replay(current.snapshot ?? emptyRecords, current.queue, now()).items.filter(item => {
-      if (!checked.has(item.op.id) || !item.deps.every(dep => selected.has(dep))) return false;
-      selected.add(item.op.id);
-      return true;
-    });
-  });
-  await publish();
   const receiptList = [...receipts];
-  if (items.length) {
-    assertSession(await readLocal(db), epoch);
-    const result = await api.ops({ items });
-    await changeLocal(db, epoch, current => observeResults(current, result.generation, result.results));
-    receiptList.push(...result.results.filter((row): row is Receipt => "revision" in row));
+  let observed: OpsResponse = { generation, results: receipts };
+  for (;;) {
+    const items = await changeLocal(db, epoch, current => {
+      observeResults(current, observed.generation, observed.results);
+      return nextBatch(current, checked, now());
+    });
     await publish();
+    if (!items.length) break;
+    assertSession(await readLocal(db), epoch);
+    observed = await api.ops({ items });
+    for (const { op } of items) checked.delete(op.id);
+    for (const result of observed.results) if ("revision" in result) receiptList.push(result);
   }
 
   for (;;) {
