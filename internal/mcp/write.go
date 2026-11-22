@@ -81,7 +81,7 @@ type addPurchaseInput struct {
 	PersonID       string `json:"personId"                 jsonschema:"The person's id from list_people or find_person."`
 	Item           string `json:"item"                     jsonschema:"What was bought, as the buyer calls it."`
 	Price          string `json:"price"                    jsonschema:"Full price as TRY text, e.g. 1299,90 or 1.299,90."`
-	BoughtOn       string `json:"boughtOn,omitempty"       jsonschema:"Purchase date (YYYY-MM-DD). Default today."`
+	BoughtOn       string `json:"boughtOn,omitempty"       jsonschema:"YYYY-MM-DD. Default today or an earlier due date."`
 	Plan           string `json:"plan,omitempty"           jsonschema:"once (default) or installments."`
 	DueDate        string `json:"dueDate,omitempty"        jsonschema:"Once only: date, payday, endOfMonth, inTwoWeeks."`
 	Count          *int   `json:"count,omitempty"          jsonschema:"Installments only: 2 to 120. Default 6."`
@@ -165,10 +165,9 @@ func buildPurchase(
 	switch input.Plan {
 	case "", ledger.PlanOnce:
 		record.Plan = ledger.PlanOnce
-
-		return record, applyOnce(today, person, input, record)
+		err = applyOnce(today, person, input, record)
 	case ledger.PlanInstallments:
-		return record, applyInstallments(today, person, input, record)
+		err = applyInstallments(today, person, input, record)
 	default:
 		return nil, fail(
 			"plan must be %q or %q, got %q.",
@@ -176,6 +175,28 @@ func buildPurchase(
 			ledger.PlanInstallments,
 			input.Plan,
 		)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	moveBoughtOnToDue(input, record)
+
+	return record, nil
+}
+
+// moveBoughtOnToDue follows the Add purchase rule: a due date before a purchase
+// date the buyer did not set moves the purchase date back to it.
+func moveBoughtOnToDue(input *addPurchaseInput, record *purchaseCreate) {
+	if input.BoughtOn != unsetDate {
+		return
+	}
+
+	for _, due := range []*string{record.DueDate, record.FirstDue} {
+		if due != nil && *due < record.BoughtOn {
+			record.BoughtOn = *due
+		}
 	}
 }
 

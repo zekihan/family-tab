@@ -342,7 +342,7 @@ Server name `family-tab`, official Go SDK, streamable HTTP transport (stateless 
 
 | Tool | Parameters | Result |
 | --- | --- | --- |
-| `add_purchase` | `personId`, `item`, `price`, `boughtOn?` (today), `plan?` (`once`), `dueDate?`, `count?` (6), `firstDue?`, `lastDayOfMonth?`, `note?` | The created purchase with its schedule and the person's new balance |
+| `add_purchase` | `personId`, `item`, `price`, `boughtOn?` (today, or the due date or first due date when earlier), `plan?` (`once`), `dueDate?`, `count?` (6), `firstDue?`, `lastDayOfMonth?`, `note?` | The created purchase with its schedule and the person's new balance |
 | `record_payment` | `personId`, `amount`, `paidOn?` (today), `note?` | The payment and the person's new balance |
 | `add_refund` | `purchaseId`, `amount`, `refundedOn?` (today), `note?` | The refund and the purchase's new view |
 | `add_alias` | `personId`, `alias` | The updated person |

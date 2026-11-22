@@ -67,6 +67,32 @@ func TestAddPurchaseDueDates(t *testing.T) {
 	}
 }
 
+func TestAddPurchaseMovesUnsetBoughtOnToEarlierDue(t *testing.T) {
+	t.Parallel()
+
+	env := newHarness(t)
+	env.setup()
+
+	dad := env.addPerson("Dad", nil)
+
+	for _, input := range []map[string]any{
+		{"plan": "once", "dueDate": "2026-10-15"},
+		{"plan": "installments", "firstDue": "2026-10-15"},
+	} {
+		input["personId"], input["item"], input["price"] = dad, "Phone", "600"
+
+		got := env.purchase(text(t, env.mustCall("add_purchase", input), "purchase", "id"))
+		if got.BoughtOn != "2026-10-15" {
+			t.Errorf("%v stored boughtOn %s, want 2026-10-15", input, got.BoughtOn)
+		}
+	}
+
+	env.mustFail("add_purchase", map[string]any{
+		"personId": dad, "item": "Phone", "price": "600", "boughtOn": "2026-11-01",
+		"dueDate": "2026-10-15",
+	}, "invalid")
+}
+
 func TestAddPurchaseValidation(t *testing.T) {
 	t.Parallel()
 
@@ -105,7 +131,11 @@ func TestAddPurchaseValidation(t *testing.T) {
 	env.mustFail("add_purchase", base(map[string]any{"personId": "nobody"}), "list_people")
 	env.mustFail("add_purchase", base(map[string]any{"plan": "monthly"}), "plan must be")
 	env.mustFail("add_purchase", base(map[string]any{"item": "   "}), "item must not be empty")
-	env.mustFail("add_purchase", base(map[string]any{"dueDate": "2026-11-01"}), "invalid")
+	env.mustFail(
+		"add_purchase",
+		base(map[string]any{"boughtOn": "2026-11-22", "dueDate": "2026-11-01"}),
+		"invalid",
+	)
 
 	if len(env.snapshot().Purchases) != 0 {
 		t.Fatal("a rejected purchase was stored")
