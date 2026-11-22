@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures";
 import {
-  apiHeader, cash, figure, homeHeading, money, openLedger, person, purchase, seedPerson,
+  apiHeader, cash, figure, homeHeading, money, openLedger, person, purchase, save, seedPerson,
   sessionCookie, setup, signIn, snapshot, synced,
 } from "./ledger";
 
@@ -165,4 +165,26 @@ test("saving a purchase without a person shows the error by Who on a phone scree
   await expect(error).toBeInViewport();
   await expect(dialog.getByRole("group", { name: "Who" }).getByRole("button").first()).toBeFocused();
   expect((await snapshot(page)).purchases).toHaveLength(2);
+});
+
+test("a stale edit shows the current version and Reapply in view on a phone screen", async ({ app, page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page, app.url);
+  await purchase(page, { item: "Vacuum", price: "1200", newPerson: "Mom", firstDue: "2026-12-15" });
+  await person(page);
+  await page.getByRole("button", { name: "Edit Vacuum", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit purchase" });
+  await expect(dialog).toBeVisible();
+
+  const other = await context.newPage();
+  await other.setViewportSize({ width: 390, height: 844 });
+  await other.goto(page.url());
+  await other.getByRole("button", { name: "Edit Vacuum", exact: true }).click();
+  const otherDialog = other.getByRole("dialog", { name: "Edit purchase" });
+  await otherDialog.getByLabel("What").fill("Robot vacuum");
+  await save(otherDialog);
+
+  await dialog.getByLabel("Total price").fill("1300");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Reapply my changes" })).toBeInViewport();
 });

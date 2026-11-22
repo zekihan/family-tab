@@ -82,10 +82,15 @@ export function SaveForm({ children, onSave, busy, error, stale, onReapply, labe
 }) {
   const { snapshot } = useLedgerUI();
   const errorText = useRef<HTMLParagraphElement>(null);
-  // The footer stays put while fields scroll, so bring a new error into view.
+  const staleNotice = useRef<HTMLDivElement>(null);
+  // The footer stays put while fields scroll, so bring a new error or the
+  // stale-record notice into view.
   useEffect(() => {
     if (error) errorText.current?.scrollIntoView({ block: "nearest" });
   }, [error]);
+  useEffect(() => {
+    if (stale) staleNotice.current?.scrollIntoView({ block: "nearest" });
+  }, [stale]);
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!stale && !snapshot.sync.restoreInProgress && !blocked && !busy) onSave();
@@ -104,7 +109,7 @@ export function SaveForm({ children, onSave, busy, error, stale, onReapply, labe
   }
   return <form className="sheet-form" onSubmit={submit} onInvalidCapture={revealInvalid}>
     <div className="form-fields">{children}
-      {stale && <div role="alert" className="notice">
+      {stale && <div ref={staleNotice} role="alert" className="notice">
         <p>{stale.current ? "This record changed while you were editing. Review the current version before reapplying your changes." : "This record was removed while you were editing."}</p>
         {stale.current && <RecordSummary records={snapshot.records} record={stale.current} />}
         {stale.current && onReapply && <button type="button" className="button secondary" onClick={onReapply}>Reapply my changes</button>}
