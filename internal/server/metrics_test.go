@@ -14,6 +14,49 @@ import (
 	"github.com/zekihan/family-tab/internal/syncsvc"
 )
 
+type metricsMCPAuth struct{ fakeAuth }
+
+func (metricsMCPAuth) MCPEnabled() bool { return true }
+
+func TestMetricsRecordsMCPRoute(t *testing.T) {
+	t.Parallel()
+
+	srv := New(Deps{
+		Auth: metricsMCPAuth{fakeAuth: fakeAuth{authenticated: true}},
+		Sync: nil,
+		MCP: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+		}),
+		Web: nil,
+	})
+	registry := srv.MetricsRegistry()
+	handler := registry.Middleware(
+		middleware.RecoverHandler(middleware.Logging(srv.Handler())),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", http.NoBody),
+	)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("MCP status = %d", response.Code)
+	}
+
+	recorder := httptest.NewRecorder()
+	registry.Handler().ServeHTTP(
+		recorder,
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", http.NoBody),
+	)
+
+	if !strings.Contains(
+		recorder.Body.String(),
+		`http_requests_total{method="POST",route="/mcp",status="202"} 1`,
+	) {
+		t.Fatalf("metrics exposition missing MCP route label:\n%s", recorder.Body.String())
+	}
+}
+
 // TestMetricsRecordsSyncRequests serves one snapshot through the API and
 // checks the server registry recorded it.
 func TestMetricsRecordsSyncRequests(t *testing.T) {
