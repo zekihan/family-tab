@@ -11,6 +11,8 @@ import (
 	"mime"
 	"net/http"
 
+	"github.com/zekihan/go-commons/metrics"
+
 	"github.com/zekihan/family-tab/internal/auth"
 	"github.com/zekihan/family-tab/internal/ledger"
 	"github.com/zekihan/family-tab/internal/protocol"
@@ -77,7 +79,8 @@ func (srv *Server) apiHandler() http.Handler {
 			return
 		}
 
-		route.handler.ServeHTTP(w, r)
+		// The route table is fixed, so the path is a bounded label value.
+		route.handler.ServeHTTP(w, metrics.WithRoute(r, r.URL.Path))
 	})
 }
 
@@ -94,6 +97,12 @@ func me(w http.ResponseWriter, r *http.Request) {
 
 func (srv *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 	value, err := srv.deps.Sync.Snapshot(r.Context())
+	srv.observeSyncOp("snapshot", err)
+
+	if err == nil {
+		srv.observeHeadRevision(value.Revision)
+	}
+
 	writeResult(w, r, value, err)
 }
 
@@ -125,9 +134,13 @@ func (srv *Server) restore(
 	restore.ExpectedRevision = *req.ExpectedRevision
 
 	value, err := srv.deps.Sync.Restore(ctx, restore)
+	srv.observeSyncOp("restore", err)
+
 	if err != nil {
 		return nil, fmt.Errorf("restore backup: %w", err)
 	}
+
+	srv.observeHeadRevision(value.Revision)
 
 	return value, nil
 }
@@ -139,6 +152,8 @@ type opsResponse struct {
 
 func (srv *Server) apply(ctx context.Context, req *protocol.OpsRequest) (*opsResponse, error) {
 	value, err := srv.deps.Sync.Apply(ctx, req, ledger.SourceApp)
+	srv.observeSyncOp("apply", err)
+
 	if err != nil {
 		return nil, fmt.Errorf("apply sync batch: %w", err)
 	}

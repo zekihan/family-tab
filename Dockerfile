@@ -13,7 +13,7 @@ COPY --from=build --chmod=1777 /tmp /tmp
 COPY --from=build /family-tab /usr/local/bin/family-tab
 COPY LICENSE /usr/share/licenses/family-tab/LICENSE
 USER 25120:25120
-EXPOSE 8080
+EXPOSE 8080 9090
 VOLUME ["/data"]
 ENV DB_PATH=/data/family-tab.db BACKUP_DIR=/data/backups LISTEN_ADDR=:8080
 ENTRYPOINT ["family-tab"]

@@ -27,7 +27,8 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.ListenAddr != ":8080" || cfg.DBPath != "./family-tab.db" || cfg.BackupDir != "" ||
+	if cfg.ListenAddr != ":8080" || cfg.MetricsAddr != ":9090" || cfg.DBPath != "./family-tab.db" ||
+		cfg.BackupDir != "" ||
 		cfg.OIDCClientSecret != "" || cfg.MCPClientID != "" ||
 		cfg.MCPAudience != "https://tab.example/mcp" || cfg.LogLevel.String() != "INFO" ||
 		cfg.BackupInterval.String() != "6h0m0s" || cfg.BackupKeep != 28 || cfg.CookieInsecure {
