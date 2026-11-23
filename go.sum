@@ -66,8 +66,8 @@ github.com/valyala/histogram v1.2.0 h1:wyYGAZZt3CpwUiIb9AU/Zbllg1llXyrtApRS815OL
 github.com/valyala/histogram v1.2.0/go.mod h1:Hb4kBwb4UxsaNbbbh+RRz8ZR6pdodR57tzWUS3BUzXY=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
 github.com/yosida95/uritemplate/v3 v3.0.2/go.mod h1:ILOh0sOhIJR3+L/8afwt/kE++YT040gmv5BQTMR2HP4=
-github.com/zekihan/go-commons v1.1.0 h1:9+01WIt5aAOLm/+D+jMcl8HFDwo5+e7DGJFTY4KaR1g=
-github.com/zekihan/go-commons v1.1.0/go.mod h1:aPeOvfQBYQV/2nuCFSAS9eAJABSikgac8GDD/QLVjQg=
+github.com/zekihan/go-commons v1.2.0 h1:t0x3j55yTtSOhUPjJal8bhlhI/JJya+MzhRjQlBOGU4=
+github.com/zekihan/go-commons v1.2.0/go.mod h1:aPeOvfQBYQV/2nuCFSAS9eAJABSikgac8GDD/QLVjQg=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
 go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
 golang.org/x/mod v0.42.0 h1:ICeL3t2L30ljSPHHxDnR4fqVcBt/zR2zJAb9juavmQg=
