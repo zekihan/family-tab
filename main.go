@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zekihan/go-commons/metrics"
 	"github.com/zekihan/go-commons/middleware"
 	"github.com/zekihan/go-commons/utils"
 
@@ -88,6 +89,7 @@ func run() error {
 		MCP:  mcp.NewHandler(mcp.Deps{Ledger: syncSvc, Now: time.Now, Version: utils.Version}),
 		Web:  webFS,
 	})
+	registry := srv.MetricsRegistry()
 
 	if cfg.BackupDir != "" {
 		go func() {
@@ -100,13 +102,35 @@ func run() error {
 
 	httpServer := new(http.Server)
 	httpServer.Addr = cfg.ListenAddr
-	httpServer.Handler = middleware.RecoverHandler(middleware.Logging(srv.Handler()))
+	httpServer.Handler = registry.Middleware(
+		middleware.RecoverHandler(middleware.Logging(srv.Handler())),
+	)
 	httpServer.ReadHeaderTimeout = readHeaderTimeout
 	httpServer.IdleTimeout = idleTimeout
 
 	slog.InfoContext(ctx, "Listening", slog.String("addr", cfg.ListenAddr))
 
+	if cfg.MetricsAddr != "" {
+		slog.InfoContext(ctx, "Serving metrics", slog.String("addr", cfg.MetricsAddr))
+
+		go serveMetrics(ctx, cfg.MetricsAddr, registry)
+	}
+
 	return serve(ctx, httpServer)
+}
+
+// serveMetrics runs the internal /metrics listener until ctx is canceled.
+// An empty addr disables the listener. It is never served on the public
+// ingress.
+func serveMetrics(ctx context.Context, addr string, registry *metrics.Registry) {
+	if addr == "" {
+		return
+	}
+
+	err := registry.ListenAndServe(ctx, addr)
+	if err != nil {
+		slog.ErrorContext(ctx, "Metrics server failed", slog.Any("error", err))
+	}
 }
 
 func serve(ctx context.Context, httpServer *http.Server) error {

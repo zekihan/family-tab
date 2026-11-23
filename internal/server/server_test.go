@@ -99,7 +99,7 @@ func TestRoutingAndHeaders(t *testing.T) {
 		{"/auth/login", http.MethodGet, "", "", "", http.StatusFound},
 		{"/auth/callback", http.MethodGet, "", "", "", http.StatusFound},
 		{"/auth/unknown", http.MethodGet, "", "404", "", http.StatusNotFound},
-		{"/healthz", http.MethodGet, "", "OK", "", http.StatusOK},
+		{"/healthz", http.MethodGet, "", "OK", "no-store", http.StatusOK},
 		{"/person/123", http.MethodGet, "", "<title>Family Tab</title>", "no-cache", http.StatusOK},
 		{"/index.html", http.MethodGet, "", "<title>Family Tab</title>", "no-cache", http.StatusOK},
 		{"/sw.js", http.MethodGet, "", "service worker", "no-cache", http.StatusOK},

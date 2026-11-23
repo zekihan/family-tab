@@ -21,6 +21,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design and
 | `MCP_CLIENT_ID` | empty | OAuth client whose access tokens may call `/mcp`; MCP is disabled when empty |
 | `MCP_AUDIENCE` | `PUBLIC_URL` + `/mcp` | Resource identifier MCP access tokens must name in `aud` |
 | `LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `METRICS_ADDR` | `:9090` | Internal Prometheus metrics listener at `/metrics`; empty disables it, never exposed through the public ingress |
 | `DB_PATH` | `./family-tab.db` | SQLite database |
 | `BACKUP_DIR` | empty | Directory for periodic `VACUUM INTO` copies; disabled when empty |
 | `BACKUP_INTERVAL` | `6h` | Time between database copies |
@@ -29,6 +30,12 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design and
 | `COOKIE_INSECURE` | `false` | Drop the `Secure` cookie attribute, for local HTTP development only |
 
 The OIDC client must allow PKCE `S256` and the `query` response mode. The container image sets `DB_PATH=/data/family-tab.db` and `BACKUP_DIR=/data/backups`.
+
+Metrics use the standard `http_requests_total` / `http_request_duration_seconds`
+(by method, route, status) plus `familytab_sync_operations_total{operation,
+outcome}` for `apply`/`restore`/`snapshot`, and the
+`familytab_ledger_head_revision` gauge. Scrape container port `9090`, path
+`/metrics`.
 
 ## Development
 

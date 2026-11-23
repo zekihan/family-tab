@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 
+	"github.com/zekihan/go-commons/metrics"
 	"github.com/zekihan/go-commons/web/health"
 
 	"github.com/zekihan/family-tab/internal/syncsvc"
@@ -37,10 +39,14 @@ type Deps struct {
 }
 
 type Server struct {
-	deps Deps
+	deps       Deps
+	metricsReg *metrics.Registry
+	metricsMu  sync.Mutex
 }
 
-func New(deps Deps) *Server { return &Server{deps: deps} }
+func New(deps Deps) *Server {
+	return &Server{deps: deps, metricsReg: nil, metricsMu: sync.Mutex{}}
+}
 
 // Handler returns the root handler.
 func (srv *Server) Handler() http.Handler {

@@ -16,6 +16,10 @@ import (
 type Config struct {
 	// ListenAddr is the HTTP listen address.
 	ListenAddr string `env:"LISTEN_ADDR, default=:8080"`
+	// MetricsAddr is the internal listener serving Prometheus metrics at
+	// /metrics (for example ":9090"). Empty disables the listener so the
+	// metrics are never exposed through the public ingress.
+	MetricsAddr string `env:"METRICS_ADDR, default=:9090"`
 	// DBPath is the SQLite database file.
 	DBPath string `env:"DB_PATH, default=./family-tab.db"`
 	// BackupDir receives periodic VACUUM INTO copies of the database.
