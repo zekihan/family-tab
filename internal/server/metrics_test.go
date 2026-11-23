@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zekihan/go-commons/middleware"
+
 	"github.com/zekihan/family-tab/internal/protocol"
 	"github.com/zekihan/family-tab/internal/store"
 	"github.com/zekihan/family-tab/internal/syncsvc"
@@ -30,7 +32,12 @@ func TestMetricsRecordsSyncRequests(t *testing.T) {
 		MCP:  nil,
 		Web:  nil,
 	})
-	handler := srv.Handler()
+	registry := srv.MetricsRegistry()
+	// Mirror the production chain from main.go so the route label is recorded
+	// through the same middlewares.
+	handler := registry.Middleware(
+		middleware.RecoverHandler(middleware.Logging(srv.Handler())),
+	)
 
 	request := httptest.NewRequestWithContext(
 		t.Context(),
@@ -47,7 +54,6 @@ func TestMetricsRecordsSyncRequests(t *testing.T) {
 		t.Fatalf("snapshot status = %d", response.Code)
 	}
 
-	registry := srv.MetricsRegistry()
 	if got := registry.Counter("familytab_sync_operations_total", map[string]string{
 		"operation": "snapshot",
 		"outcome":   "ok",
@@ -67,5 +73,17 @@ func TestMetricsRecordsSyncRequests(t *testing.T) {
 
 	if !strings.Contains(recorder.Body.String(), "familytab_ledger_head_revision") {
 		t.Fatalf("metrics exposition missing head revision:\n%s", recorder.Body.String())
+	}
+
+	body := recorder.Body.String()
+	if !strings.Contains(
+		body,
+		`http_requests_total{method="GET",route="/api/snapshot",status="200"}`,
+	) {
+		t.Fatalf("metrics exposition missing API route label:\n%s", body)
+	}
+
+	if strings.Contains(body, `route="unknown"`) {
+		t.Fatalf("metrics exposition labels a request unknown:\n%s", body)
 	}
 }
