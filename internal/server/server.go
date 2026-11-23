@@ -84,7 +84,7 @@ func (srv *Server) Handler() http.Handler {
 		}
 
 		if r.URL.Path == "/mcp" {
-			mcpHandler.ServeHTTP(w, r)
+			mcpHandler.ServeHTTP(w, metrics.WithRoute(r, "/mcp"))
 
 			return
 		}
