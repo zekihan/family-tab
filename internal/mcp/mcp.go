@@ -58,8 +58,6 @@ func NewHandler(deps Deps) http.Handler {
 	// The catalog is fixed for the life of the process. Keep tool discovery
 	// enabled without holding open streams for tool-list changes.
 	serverOptions.Capabilities = new(sdk.ServerCapabilities)
-	//nolint:staticcheck // Preserve the SDK's logging capability for older clients.
-	serverOptions.Capabilities.Logging = new(sdk.LoggingCapabilities)
 	serverOptions.Capabilities.Tools = new(sdk.ToolCapabilities)
 
 	server := sdk.NewServer(implementation, serverOptions)
