@@ -27,7 +27,8 @@ func (tx *Tx) Records(ctx context.Context) (*ledger.Records, error) {
 		Payouts:   []ledger.Payout{},
 	}
 
-	err := tx.tx.GetContext(ctx, &settings, "SELECT id, time_zone, currency, version FROM settings")
+	err := tx.Inner().
+		GetContext(ctx, &settings, "SELECT id, time_zone, currency, version FROM settings")
 	switch {
 	case err == nil:
 		records.Settings = &settings
@@ -52,7 +53,7 @@ func (tx *Tx) Records(ctx context.Context) (*ledger.Records, error) {
 			FROM payouts ORDER BY id`},
 	}
 	for _, query := range queries {
-		err = tx.tx.SelectContext(ctx, query.dest, query.query)
+		err = tx.Inner().SelectContext(ctx, query.dest, query.query)
 		if err != nil {
 			return nil, fmt.Errorf("load ledger records: %w", err)
 		}
@@ -160,7 +161,7 @@ func (tx *Tx) SaveRecord(ctx context.Context, record any) error {
 		record = row
 	}
 
-	_, err := tx.tx.NamedExecContext(ctx, query, record)
+	_, err := tx.Inner().NamedExecContext(ctx, query, record)
 	if err != nil {
 		return fmt.Errorf("save ledger record of type %T: %w", record, err)
 	}
@@ -186,7 +187,7 @@ func (tx *Tx) DeleteRecord(ctx context.Context, recordType, id string) error {
 		return fmt.Errorf("delete %q: %w", recordType, errRecordType)
 	}
 
-	_, err := tx.tx.ExecContext(ctx, query, id)
+	_, err := tx.Inner().ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("delete ledger record of type %q: %w", recordType, err)
 	}
@@ -195,7 +196,7 @@ func (tx *Tx) DeleteRecord(ctx context.Context, recordType, id string) error {
 }
 
 func (tx *Tx) ReplaceRecords(ctx context.Context, records *ledger.Records) error {
-	_, err := tx.tx.ExecContext(ctx, `
+	_, err := tx.Inner().ExecContext(ctx, `
 		DELETE FROM refunds;
 		DELETE FROM payouts;
 		DELETE FROM payments;

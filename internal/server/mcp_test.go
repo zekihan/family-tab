@@ -15,11 +15,12 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/zekihan/go-commons/oidcauth"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/zekihan/family-tab/internal/auth"
 	"github.com/zekihan/family-tab/internal/mcp"
+	"github.com/zekihan/family-tab/internal/protocol"
 	"github.com/zekihan/family-tab/internal/store"
 	"github.com/zekihan/family-tab/internal/syncsvc"
 )
@@ -125,10 +126,16 @@ func newMCPStack(t *testing.T) *mcpStack {
 
 	t.Cleanup(func() { _ = st.Close() })
 
-	authSvc, err := auth.New(t.Context(), &auth.Config{
+	authSvc, err := oidcauth.New(t.Context(), &oidcauth.Config[protocol.Me]{
+		HTTPClient: nil, SuccessPath: "/",
 		PublicURL: "https://tab.example/", Issuer: issuer.URL, ClientID: "family-tab",
-		ClientSecret: "secret", BuyerSubject: mcpBuyer, MCPClientID: mcpClientID,
-		MCPAudience: mcpAudience, CookieInsecure: false,
+		ClientSecret: "secret", OwnerSubject: mcpBuyer, MCPClientID: mcpClientID,
+		MCPAudience: mcpAudience, AppName: "Family Tab", SessionCookie: "ft_session",
+		TransactionCookie: "ft_oidc_tx", CookieInsecure: false,
+		Authorize: func(info oidcauth.IdentityInfo) (protocol.Me, bool) {
+			return protocol.Me{Subject: info.Subject, Name: info.Name, Email: info.Email},
+				info.Subject != ""
+		},
 	}, st.DB())
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +224,7 @@ func TestMCPRequiresBearerToken(t *testing.T) {
 		response := httptest.NewRecorder()
 		stack.handler.ServeHTTP(response, request)
 
-		var metadata auth.ProtectedResource
+		var metadata oidcauth.ProtectedResource
 
 		err := json.Unmarshal(response.Body.Bytes(), &metadata)
 		if response.Code != http.StatusOK || err != nil || metadata.Resource != mcpAudience ||

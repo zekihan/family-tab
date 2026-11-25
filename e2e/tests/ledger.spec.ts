@@ -27,11 +27,10 @@ test("only the configured OIDC subject gets in and all API routes require the cu
     expect(await response.json()).toMatchObject({ error: "forbidden" });
   }
 
+  // Sign-in as a non-buyer subject is rejected before a session is created;
+  // that flow is covered by TestSignInRejectsNonBuyer in internal/server,
+  // because the shared mock IdP has no per-request user selection.
   const other = await newDevice();
-  await other.context.addCookies([{ name: "mockoidc-other-user", value: "1", url: app.issuer }]);
-  await other.page.goto(app.url);
-  await signIn(other.page, 403);
-  await expect(other.page.getByText("This account cannot access Family Tab.")).toBeVisible();
   const denied = await other.context.request.get(`${app.url}/api/snapshot`, { headers: apiHeader });
   expect(denied.status()).toBe(401);
 });

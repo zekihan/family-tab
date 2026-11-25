@@ -28,7 +28,7 @@ func (tx *Tx) Receipt(ctx context.Context, opID string) (Receipt, error) {
 		body    []byte
 	)
 
-	err := tx.tx.QueryRowxContext(ctx,
+	err := tx.Inner().QueryRowxContext(ctx,
 		"SELECT status, generation, revision, body FROM receipts WHERE op_id = ?", opID).
 		Scan(&receipt.Status, &receipt.Meta.Generation, &receipt.Meta.Revision, &body)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -46,7 +46,7 @@ func (tx *Tx) Receipt(ctx context.Context, opID string) (Receipt, error) {
 }
 
 func (tx *Tx) SaveReceipt(ctx context.Context, receipt *Receipt) error {
-	_, err := tx.tx.ExecContext(ctx, `
+	_, err := tx.Inner().ExecContext(ctx, `
 		INSERT INTO receipts
 			(op_id, status, generation, revision, body, created_at, kind, record_type, record_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -68,7 +68,7 @@ func (tx *Tx) CreateReceiptTime(
 ) (time.Time, bool, error) {
 	var createdAt string
 
-	err := tx.tx.GetContext(ctx, &createdAt, `
+	err := tx.Inner().GetContext(ctx, &createdAt, `
 		SELECT created_at FROM receipts
 		WHERE op_id = ? AND status = 'applied' AND kind = 'create'
 			AND record_type = ? AND record_id = ?`, opID, recordType, recordID)

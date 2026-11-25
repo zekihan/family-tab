@@ -20,12 +20,11 @@ Guidance for AI agents working in this repository.
 | `internal/config` | Environment configuration |
 | `internal/ledger` | Pure Go balance, view, defaults and validation rules (no I/O) |
 | `internal/protocol` | Sync and backup wire types |
-| `internal/store` | SQLite schema, migrations, ledger rows, receipts |
+| `internal/store` | SQLite schema, migrations, ledger rows, receipts (store scaffold from go-commons `sqlitestore`) |
 | `internal/syncsvc` | Operation commit path, snapshots, restore |
-| `internal/auth` | OIDC sign-in, sessions, auth middleware |
 | `internal/mcp` | MCP server: agent tools over the ledger, mounted at `/mcp` |
 | `internal/server` | HTTP routing, API handlers, SPA serving |
-| `internal/backup` | Periodic `VACUUM INTO` database copies |
+| go-commons `oidcauth` / `backup` | OIDC sign-in, sessions, bearer auth and periodic `VACUUM INTO` database copies (wired in `main.go`) |
 | `web/src/types.ts` | Shared TypeScript types |
 | `web/src/ledger` | Pure TypeScript balance rules, dates, amount parsing |
 | `web/src/data` | IndexedDB, operation queue, sync engine, sign-out, export and restore |
