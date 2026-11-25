@@ -11,17 +11,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zekihan/go-commons/backup"
+	"github.com/zekihan/go-commons/log"
 	"github.com/zekihan/go-commons/metrics"
 	"github.com/zekihan/go-commons/middleware"
+	"github.com/zekihan/go-commons/oidcauth"
 	"github.com/zekihan/go-commons/utils"
 
 	// IANA zones must resolve inside the distroless image.
 	_ "time/tzdata"
 
-	"github.com/zekihan/family-tab/internal/auth"
-	"github.com/zekihan/family-tab/internal/backup"
 	"github.com/zekihan/family-tab/internal/config"
 	"github.com/zekihan/family-tab/internal/mcp"
+	"github.com/zekihan/family-tab/internal/protocol"
 	"github.com/zekihan/family-tab/internal/server"
 	"github.com/zekihan/family-tab/internal/store"
 	"github.com/zekihan/family-tab/internal/syncsvc"
@@ -51,9 +53,9 @@ func run() error {
 		return fmt.Errorf("start: %w", err)
 	}
 
-	loggerConfig := new(utils.LoggerConfig)
+	loggerConfig := new(log.LoggerConfig)
 	loggerConfig.Level = cfg.LogLevel
-	utils.InitLogger(loggerConfig)
+	log.InitLogger(loggerConfig)
 	utils.LogVersionInfo(ctx)
 
 	st, err := store.Open(ctx, cfg.DBPath)
@@ -62,15 +64,24 @@ func run() error {
 	}
 	defer st.Close()
 
-	authSvc, err := auth.New(ctx, &auth.Config{
-		PublicURL:      cfg.PublicURL,
-		Issuer:         cfg.OIDCIssuer,
-		ClientID:       cfg.OIDCClientID,
-		ClientSecret:   cfg.OIDCClientSecret,
-		BuyerSubject:   cfg.BuyerSubject,
-		MCPClientID:    cfg.MCPClientID,
-		MCPAudience:    cfg.MCPAudience,
-		CookieInsecure: cfg.CookieInsecure,
+	authSvc, err := oidcauth.New(ctx, &oidcauth.Config[protocol.Me]{
+		HTTPClient:        nil,
+		SuccessPath:       "/",
+		PublicURL:         cfg.PublicURL,
+		Issuer:            cfg.OIDCIssuer,
+		ClientID:          cfg.OIDCClientID,
+		ClientSecret:      cfg.OIDCClientSecret,
+		OwnerSubject:      cfg.BuyerSubject,
+		MCPClientID:       cfg.MCPClientID,
+		MCPAudience:       cfg.MCPAudience,
+		AppName:           "Family Tab",
+		SessionCookie:     "ft_session",
+		TransactionCookie: "ft_oidc_tx",
+		CookieInsecure:    cfg.CookieInsecure,
+		Authorize: func(info oidcauth.IdentityInfo) (protocol.Me, bool) {
+			return protocol.Me{Subject: info.Subject, Name: info.Name, Email: info.Email},
+				info.Subject != ""
+		},
 	}, st.DB())
 	if err != nil {
 		return fmt.Errorf("init sign-in: %w", err)
@@ -93,7 +104,8 @@ func run() error {
 
 	if cfg.BackupDir != "" {
 		go func() {
-			backupErr := backup.Run(ctx, st.DB(), cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep)
+			backupErr := backup.Run(ctx, st.DB(), cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep,
+				backup.WithFilePrefix("family-tab-"))
 			if backupErr != nil && !errors.Is(backupErr, context.Canceled) {
 				slog.ErrorContext(ctx, "Database backups stopped", slog.Any("error", backupErr))
 			}

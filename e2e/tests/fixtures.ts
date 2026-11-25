@@ -10,9 +10,8 @@ import { test as base, expect } from "@playwright/test";
 import type { BrowserContext, BrowserContextOptions, Page } from "@playwright/test";
 
 const bin = fileURLToPath(new URL("../.bin/", import.meta.url));
-const buyer = "family-tab-buyer";
 
-type Provider = { Issuer: string; ClientID: string; ClientSecret: string };
+type Provider = { issuer: string; clientId: string; clientSecret: string; subject: string };
 type App = {
   url: string; buyer: string; issuer: string;
   stall: (path: string, phase?: "headers" | "body") => { started: Promise<void>; resume: () => void };
@@ -64,7 +63,7 @@ export const test = base.extend<{
   newDevice: (options?: BrowserContextOptions) => Promise<Device>;
 }, { provider: Provider }>({
   provider: [async ({}, use) => {
-    const provider = start("mockidp", ["-subject", buyer, "-port", process.env.E2E_OIDC_PORT ?? "18081"]);
+    const provider = start("mockidp", []);
     try {
       await expect.poll(() => {
         provider.assertRunning();
@@ -111,10 +110,10 @@ export const test = base.extend<{
       COOKIE_INSECURE: "true",
       DB_PATH: join(directory, "ledger.db"),
       BACKUP_DIR: "",
-      OIDC_ISSUER: provider.Issuer,
-      OIDC_CLIENT_ID: provider.ClientID,
-      OIDC_CLIENT_SECRET: provider.ClientSecret,
-      BUYER_SUBJECT: buyer,
+      OIDC_ISSUER: provider.issuer,
+      OIDC_CLIENT_ID: provider.clientId,
+      OIDC_CLIENT_SECRET: provider.clientSecret,
+      BUYER_SUBJECT: provider.subject,
     });
     try {
       await expect.poll(async () => {
@@ -124,7 +123,7 @@ export const test = base.extend<{
         return response?.status;
       }).toBe(200);
       await use({
-        url, buyer, issuer: provider.Issuer,
+        url, buyer: provider.subject, issuer: provider.issuer,
         stall(path, phase = "headers") {
           if (!proxy) throw new Error("Stalling requests requires the loopback proxy.");
           let resume!: () => void;

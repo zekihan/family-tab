@@ -12,8 +12,8 @@ import (
 	"net/http"
 
 	"github.com/zekihan/go-commons/metrics"
+	"github.com/zekihan/go-commons/oidcauth"
 
-	"github.com/zekihan/family-tab/internal/auth"
 	"github.com/zekihan/family-tab/internal/ledger"
 	"github.com/zekihan/family-tab/internal/protocol"
 )
@@ -85,7 +85,7 @@ func (srv *Server) apiHandler() http.Handler {
 }
 
 func me(w http.ResponseWriter, r *http.Request) {
-	identity, ok := auth.Identity(r.Context())
+	identity, ok := oidcauth.Identity[protocol.Me](r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "Sign in is required.")
 
