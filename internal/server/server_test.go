@@ -282,6 +282,7 @@ func TestRestoreRejectsMalformedBackupFields(t *testing.T) {
 	for _, test := range []struct {
 		name, old, replacement string
 	}{
+		{"invalid time zone", `"timeZone":"UTC"`, `"timeZone":"Factory"`},
 		{"missing payday", `"payday":null,`, ""},
 		{"missing archived", `,"archived":false`, ""},
 		{"missing aliases", `,"aliases":[]`, ""},

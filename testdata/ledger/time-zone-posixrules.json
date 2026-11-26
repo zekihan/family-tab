@@ -1,0 +1,8 @@
+{
+  "name": "time-zone-posixrules",
+  "description": "The tzdata posixrules file is not a ledger time zone",
+  "timeZone": "posixrules",
+  "today": "2025-11-22",
+  "records": { "people": [], "purchases": [], "payments": [], "refunds": [], "payouts": [] },
+  "expect": { "valid": { "code": "invalid" } }
+}

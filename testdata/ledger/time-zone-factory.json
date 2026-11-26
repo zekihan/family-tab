@@ -1,0 +1,8 @@
+{
+  "name": "time-zone-factory",
+  "description": "The tzdata Factory placeholder is not a ledger time zone",
+  "timeZone": "Factory",
+  "today": "2025-11-22",
+  "records": { "people": [], "purchases": [], "payments": [], "refunds": [], "payouts": [] },
+  "expect": { "valid": { "code": "invalid" } }
+}

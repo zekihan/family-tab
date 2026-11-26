@@ -292,7 +292,7 @@ Where DESIGN.md leaves a detail open, both implementations and the fixtures foll
 
 Codes: a missing reference is `not_found`, a repeated ID is `duplicate_id` (IDs are unique across all record types), refunds above the price are `refunds_exceed_total`, and every other record rule is `invalid`.
 
-- Dates must be real calendar dates in `YYYY-MM-DD` form. Settings `timeZone` must be a name that loads from the IANA database (`UTC` included); `""` and `Local` are invalid.
+- Dates must be real calendar dates in `YYYY-MM-DD` form. Settings `timeZone` must be an IANA zone or alias with its registered casing (`UTC` included). Empty names, `Local`, `Factory`, `posixrules`, and names under `posix/` or `right/` are invalid.
 - Names and items are non-empty after trimming. Notes, when non-null, are at most 500 Unicode code points. Names and items are at most 200.
 - Amounts and `totalMinor` are integers from 1 through 10,000,000,000.
 - Amount input trims Unicode `White_Space` and U+FEFF from both ends before parsing. Whitespace inside the amount is invalid.
