@@ -3,6 +3,7 @@ package ledger
 import (
 	"iter"
 	"maps"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -155,16 +156,64 @@ func validateSettings(settings *Settings) *RuleError {
 		return rule(CodeInvalid, "invalid ledger ID or currency")
 	}
 
-	if settings.TimeZone == "" || settings.TimeZone == "Local" {
-		return rule(CodeInvalid, "invalid ledger time zone")
-	}
-
-	_, err := time.LoadLocation(settings.TimeZone)
-	if err != nil {
+	if !isValidTimeZone(settings.TimeZone) {
 		return rule(CodeInvalid, "invalid ledger time zone")
 	}
 
 	return nil
+}
+
+var zoneComponentPattern = regexp.MustCompile(
+	`^(?:[A-Z][a-z]*(?:_[A-Z][a-z]*)*|GMT[+-]\d{1,2})$`,
+)
+
+// Keep these spellings in sync with zoneCaseExceptions in web/src/ledger/dates.ts.
+var zoneCaseExceptions = func() map[string]string {
+	spellings := []string{
+		"ACT", "BajaNorte", "BajaSur", "Blanc-Sablon", "CET", "CST6CDT",
+		"ComodRivadavia", "Dar_es_Salaam", "DeNoronha", "DumontDUrville",
+		"EET", "EST", "EST5EDT", "East-Indiana", "EasterIsland", "GB", "GB-Eire",
+		"GMT", "GMT0", "HST", "Indiana-Starke", "Isle_of_Man", "Knox_IN", "LHI",
+		"MET", "MST", "MST7MDT", "McMurdo", "NSW", "NZ", "NZ-CHAT", "PRC",
+		"PST8PDT", "Port-au-Prince", "Port_of_Spain", "Porto-Novo", "ROC", "ROK",
+		"UCT", "US", "UTC", "Ust-Nera", "W-SU", "WET",
+	}
+
+	exceptions := make(map[string]string, len(spellings))
+	for _, spelling := range spellings {
+		exceptions[strings.ToLower(spelling)] = spelling
+	}
+
+	return exceptions
+}()
+
+func isValidTimeZone(zone string) bool {
+	switch zone {
+	case "", "Local", "Factory", "posixrules":
+		return false
+	}
+
+	if strings.HasPrefix(zone, "posix/") || strings.HasPrefix(zone, "right/") {
+		return false
+	}
+
+	_, err := time.LoadLocation(zone)
+	if err != nil {
+		return false
+	}
+
+	// LoadLocation may resolve a misspelled name on a case-insensitive filesystem.
+	for part := range strings.SplitSeq(zone, "/") {
+		if spelling, ok := zoneCaseExceptions[strings.ToLower(part)]; ok {
+			if part != spelling {
+				return false
+			}
+		} else if !zoneComponentPattern.MatchString(part) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func validatePerson(person *Person) *RuleError {
