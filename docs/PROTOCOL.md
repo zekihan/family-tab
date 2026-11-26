@@ -81,12 +81,14 @@ interface Receipt {
   current: Record | null;     // conflict only: the server's current record, null if it was deleted
   generation: string;         // generation at commit time
   revision: number;           // ledger revision after the commit (unchanged for rejections and conflicts)
+  restore?: true;             // present on applied restore receipts returned by lookup
 }
 
 type ReceiptCode =
   | "conflict"               // baseVersion differs from the record's current version, or the record is gone
   | "not_found"              // a referenced record does not exist
   | "duplicate_id"           // create with an ID that already exists
+  | "operation_id_conflict"  // the operation ID belongs to a restore
   | "invalid"                // a record rule failed (bad field, date in the future, `source` sent by a client, etc.)
   | "refunds_exceed_total"
   | "archived_person"        // new or moved purchase on an archived person
@@ -135,22 +137,23 @@ Authenticated endpoints (without a valid session, `401` with error code `unauthe
 interface Snapshot extends Records { generation: string; revision: number }
 
 type OpResult =
-  | Receipt                                                          // committed: applied, rejected or conflict
+  | Receipt                                                          // applied, rejected or conflict
   | { opId: string; status: "held"; code: "generation_mismatch"; generation: string } // not stored
   | { opId: string; status: "skipped"; code: "dependency_not_applied" };              // not stored
 
 interface RestoreResult {
   opId: string;
   status: "applied" | "rejected";
-  code: null | "invalid" | "revision_mismatch";
+  code: null | "invalid" | "revision_mismatch" | "operation_id_conflict";
   reason: string | null;
   generation: string;   // new generation when applied
   revision: number;     // expectedRevision + 1 when applied
 }
 ```
 
-- `/api/sync/ops` processes items in order, each in its own transaction. The client lists dependencies from earlier items in the same request in `deps`. The server returns an existing receipt for the operation ID before checking dependencies. If any dependency has no `applied` receipt, the item is `skipped`. After receipt and dependency checks, a different `generation` makes the operation `held`.
-- `/api/restore` returns `400` with error code `invalid` for missing or null `expectedRevision` or `backup`, a negative revision, or a missing or empty `opId`. For a complete request it returns a stored receipt for `opId` if one exists. `revision_mismatch` and backup validation failures return a rejected result and are not stored, so the buyer can preview again. Applied restores are stored in the receipts table, which a restore never clears.
+- `/api/sync/ops` processes items in order, each in its own transaction. The client lists dependencies from earlier items in the same request in `deps`. The server returns an existing ordinary receipt for the operation ID before checking dependencies. If any dependency lacks an applied ordinary receipt, the item is `skipped`. After receipt and dependency checks, a different `generation` makes the operation `held`.
+- `/api/restore` returns `400` with error code `invalid` for missing or null `expectedRevision` or `backup`, a negative revision, or a missing or empty `opId`. For a complete request it returns the stored restore result for `opId` if one exists. `revision_mismatch` and backup validation failures return a rejected result and are not stored, so the buyer can preview again. Applied restores are stored in the receipts table, which a restore never clears.
+- If an operation ID already belongs to the other kind of write, both endpoints return `rejected` with code `operation_id_conflict` and the current generation and revision. The ledger and original receipt remain intact. Receipt lookup returns either kind by ID, with `restore: true` identifying applied restores.
 - The client sends operations in order in batches of at most 200 items and 1 MiB per JSON body. An operation that cannot fit in a batch goes to review. The client treats a request timeout as a network failure. The timeout is 20 seconds per API request and 60 seconds for `/api/restore`. After a restore times out, sync checks for a receipt by its operation ID. Only **Retry restore** in Settings can resend it, using the same ID. **Cancel** clears the retry. If the original request commits after cancellation, sync still recovers the restored ledger and any unapplied changes from that backup.
 - The web server serves existing static files and falls back to `index.html` for app routes. Missing `/assets/*` and other file-like paths return `404`.
 - Sessions: cookie `ft_session`, `Secure` (configurable off for local HTTP dev only), `HttpOnly`, `SameSite=Lax`, path `/`. 30-day sliding expiry, renewed at most once an hour on authenticated requests.

@@ -27,6 +27,7 @@ const (
 	CodeGenerationMismatch   = "generation_mismatch"
 	CodeDependencyNotApplied = "dependency_not_applied"
 	CodeRevisionMismatch     = "revision_mismatch"
+	CodeOperationIDConflict  = "operation_id_conflict"
 )
 
 // Operation is one queued client change. Record, Patch and PreImage hold
@@ -55,6 +56,7 @@ type Receipt struct {
 	Current    json.RawMessage `json:"current"`
 	Blocking   []string        `json:"blocking"`
 	Revision   int64           `json:"revision"`
+	Restore    bool            `json:"restore,omitempty"`
 }
 
 // OpResult is one entry of a /api/sync/ops response: a Receipt, or a held or

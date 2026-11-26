@@ -87,8 +87,9 @@ export async function syncLedger(
   assertSession(state, epoch);
   const checked = new Set(state.queue.map(row => row.op.id));
   const { generation, receipts } = await api.receipts([...checked]);
-  const receiptList = [...receipts];
-  let observed: OpsResponse = { generation, results: receipts };
+  const operationReceipts = receipts.filter(receipt => !receipt.restore);
+  const receiptList = [...operationReceipts];
+  let observed: OpsResponse = { generation, results: operationReceipts };
   for (;;) {
     const items = await changeLocal(db, epoch, current => {
       observeResults(current, observed.generation, observed.results);

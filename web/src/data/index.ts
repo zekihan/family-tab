@@ -353,7 +353,7 @@ export function createStore(options: StoreOptions = {}) {
     assertSession(await readLocal(requireDB()), currentEpoch);
     const { receipts } = await api.receipts([request.opId]);
     const receipt = receipts.find(receipt => receipt.opId === request.opId);
-    if (receipt?.status === "applied") {
+    if (receipt?.restore && receipt.status === "applied") {
       await loadRestoredSnapshot(receipt, currentEpoch);
       announce("restoreEnd");
     } else if (receipt) {
@@ -383,7 +383,8 @@ export function createStore(options: StoreOptions = {}) {
       if (cancelled.expectedRevision >= fresh.revision) continue;
       const { receipts } = await api.receipts([cancelled.opId]);
       await changeLocal(requireDB(), currentEpoch, local => {
-        if (local.snapshot && receipts.some(receipt => receipt.opId === cancelled.opId && receipt.status === "applied")) {
+        if (local.snapshot && receipts.some(receipt =>
+          receipt.opId === cancelled.opId && receipt.restore && receipt.status === "applied")) {
           importUnapplied(local, local.snapshot, now(), cancelled.unapplied);
         }
         local.meta.cancelledRestores = local.meta.cancelledRestores?.filter(row => row.opId !== cancelled.opId);

@@ -37,8 +37,15 @@ func TestOpResultWireShapes(t *testing.T) {
 			t.Parallel()
 
 			result := OpResult(Receipt{
-				OpID: "op", Status: test.status, Generation: "gen", Code: test.code,
-				Reason: nil, Current: json.RawMessage("null"), Blocking: []string{}, Revision: 0,
+				OpID:       "op",
+				Status:     test.status,
+				Generation: "gen",
+				Code:       test.code,
+				Reason:     nil,
+				Current:    json.RawMessage("null"),
+				Blocking:   []string{},
+				Revision:   0,
+				Restore:    false,
 			})
 
 			got, err := json.Marshal(result)

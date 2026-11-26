@@ -125,4 +125,8 @@ var Migrations = []string{
 	ALTER TABLE receipts ADD COLUMN record_type TEXT;
 	ALTER TABLE receipts ADD COLUMN record_id TEXT;
 	`,
+	// Schema v4 - Distinguish restore receipts from ordinary operations.
+	`
+	ALTER TABLE receipts ADD COLUMN is_restore INTEGER CHECK (is_restore IN (0, 1));
+	`,
 }

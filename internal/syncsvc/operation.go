@@ -28,7 +28,7 @@ func commitOperation(
 	receipt := protocol.Receipt{
 		Code: nil, Reason: nil, Status: "",
 		OpID: op.ID, Generation: meta.Generation, Revision: meta.Revision,
-		Current: json.RawMessage("null"), Blocking: []string{},
+		Current: json.RawMessage("null"), Blocking: []string{}, Restore: false,
 	}
 
 	before, err := tx.Records(ctx)
@@ -65,7 +65,7 @@ func commitOperation(
 
 	err = saveReceipt(ctx, tx, &store.Receipt{
 		Body: nil, CreatedAt: now, OpID: op.ID, Status: receipt.Status, Meta: meta,
-		Kind: op.Kind, RecordType: op.RecordType, RecordID: op.RecordID,
+		Kind: op.Kind, RecordType: op.RecordType, RecordID: op.RecordID, IsRestore: false,
 	}, receipt)
 
 	return receipt, err

@@ -72,7 +72,7 @@ export function fakeServer() {
         revision: expectedRevision + 1, generation: opId,
       };
       const receipt: Receipt = { opId, status: "applied", code: null, reason: null,
-        current: null, blocking: [], generation: snapshot.generation, revision: snapshot.revision };
+        current: null, blocking: [], generation: snapshot.generation, revision: snapshot.revision, restore: true };
       receipts.set(opId, receipt);
       return Response.json(receipt);
     }
