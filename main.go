@@ -31,6 +31,7 @@ import (
 )
 
 const (
+	oidcHTTPTimeout   = 12 * time.Second
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 120 * time.Second
 	shutdownTimeout   = 10 * time.Second
@@ -65,7 +66,12 @@ func run() error {
 	defer st.Close()
 
 	authSvc, err := oidcauth.New(ctx, &oidcauth.Config[protocol.Me]{
-		HTTPClient:        nil,
+		HTTPClient: &http.Client{
+			Transport:     nil,
+			CheckRedirect: nil,
+			Jar:           nil,
+			Timeout:       oidcHTTPTimeout,
+		},
 		SuccessPath:       "/",
 		PublicURL:         cfg.PublicURL,
 		Issuer:            cfg.OIDCIssuer,
