@@ -56,11 +56,12 @@ type ProtocolOperation =
   | (ProtocolOperationBase & { kind: "update"; baseVersion: string; patch: ProtocolPatch })
   | (ProtocolOperationBase & { kind: "delete"; baseVersion: string; preImage: ProtocolRecord });
 type ProtocolReceiptCode =
-  | "conflict" | "not_found" | "duplicate_id" | "invalid" | "refunds_exceed_total" | "archived_person"
+  | "conflict" | "not_found" | "duplicate_id" | "operation_id_conflict" | "invalid" | "refunds_exceed_total" | "archived_person"
   | "purchase_has_refunds" | "person_has_records" | "alias_conflict" | "payout_exceeds_credit" | "not_setup";
 type ProtocolReceipt = {
   opId: string; status: "applied" | "rejected" | "conflict"; code: ProtocolReceiptCode | null; reason: string | null;
   blocking: string[]; current: ProtocolRecord | null; generation: string; revision: number;
+  restore?: true;
 };
 type ProtocolOpResult =
   | ProtocolReceipt
@@ -99,7 +100,7 @@ test("wire types match docs/PROTOCOL.md", () => {
   assertType<Equal<UnappliedOperation, ProtocolBackup["unapplied"][number]>>(true);
   assertType<Equal<RestoreRequest, { opId: string; expectedRevision: number; backup: ProtocolBackup }>>(true);
   assertType<Equal<RestoreResult, {
-    opId: string; status: "applied" | "rejected"; code: null | "invalid" | "revision_mismatch";
+    opId: string; status: "applied" | "rejected"; code: null | "invalid" | "revision_mismatch" | "operation_id_conflict";
     reason: string | null; generation: string; revision: number;
   }>>(true);
   assertType<Equal<Me, { subject: string; name: string | null; email: string | null }>>(true);

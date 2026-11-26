@@ -150,6 +150,7 @@ export type ReceiptCode =
   | "conflict"
   | "not_found"
   | "duplicate_id"
+  | "operation_id_conflict"
   | "invalid"
   | "refunds_exceed_total"
   | "archived_person"
@@ -168,6 +169,7 @@ export interface Receipt {
   current: LedgerRecord | null;
   generation: string;
   revision: number;
+  restore?: true;
 }
 
 export type OpResult =
@@ -224,7 +226,7 @@ export interface RestoreRequest {
 export interface RestoreResult {
   opId: string;
   status: "applied" | "rejected";
-  code: null | "invalid" | "revision_mismatch";
+  code: null | "invalid" | "revision_mismatch" | "operation_id_conflict";
   reason: string | null;
   generation: string;
   revision: number;

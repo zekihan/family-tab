@@ -19,7 +19,7 @@ func TestOpenReopen(t *testing.T) {
 	}
 
 	for pragma, want := range map[string]string{
-		"PRAGMA user_version": "3",
+		"PRAGMA user_version": "4",
 		"PRAGMA journal_mode": "wal",
 		"PRAGMA foreign_keys": "1",
 		"PRAGMA busy_timeout": "5000",

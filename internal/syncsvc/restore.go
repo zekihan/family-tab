@@ -33,6 +33,21 @@ func (svc *Service) Restore(
 		}
 
 		if stored.Body != nil {
+			if !stored.IsRestore {
+				meta, metaErr := tx.Meta(ctx)
+				if metaErr != nil {
+					return fmt.Errorf("read restore revision: %w", metaErr)
+				}
+
+				result.Status = protocol.StatusRejected
+				result.Code = new(protocol.CodeOperationIDConflict)
+				result.Reason = new(operationIDConflictReason)
+				result.Generation = meta.Generation
+				result.Revision = meta.Revision
+
+				return nil
+			}
+
 			err = json.Unmarshal(stored.Body, result)
 			if err != nil {
 				return fmt.Errorf("decode restore receipt %q: %w", req.OpID, err)
@@ -101,7 +116,7 @@ func restore(
 
 	return saveReceipt(ctx, tx, &store.Receipt{
 		Body: nil, CreatedAt: now, OpID: req.OpID, Status: result.Status, Meta: meta,
-		Kind: "", RecordType: "", RecordID: "",
+		Kind: "", RecordType: "", RecordID: "", IsRestore: true,
 	}, result)
 }
 

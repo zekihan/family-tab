@@ -2,15 +2,18 @@ package syncsvc
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/zekihan/family-tab/internal/ledger"
 	"github.com/zekihan/family-tab/internal/protocol"
+	"github.com/zekihan/family-tab/internal/store"
 )
 
 func TestRestoreAndRetry(t *testing.T) {
@@ -76,6 +79,125 @@ func TestRestoreAndRetry(t *testing.T) {
 	)
 }
 
+func TestRestoreRejectsReceiptFromOrdinaryOperation(t *testing.T) {
+	t.Parallel()
+
+	svc, _, generation := newLedger(t)
+	create := createOp(generation, ledger.TypePerson, personID, personPayload)
+	original := apply(t, svc, item(create))[0]
+	assertResult(t, original, protocol.StatusApplied, "", 2)
+	before := snapshot(t, svc)
+
+	req := restoreRequest()
+	req.OpID = create.ID
+	req.ExpectedRevision = before.Revision
+	req.Backup.People = slices.Clone(before.People)
+	req.Backup.People[0].Name = "Imported"
+
+	result := restoreOK(t, svc, req)
+	if result.Status != protocol.StatusRejected || result.Code == nil ||
+		*result.Code != protocol.CodeOperationIDConflict || result.Generation != before.Generation ||
+		result.Revision != before.Revision {
+		t.Fatalf("restore with an ordinary operation ID = %+v", result)
+	}
+
+	if got := snapshot(t, svc); !reflect.DeepEqual(got, before) {
+		t.Fatalf("restore with a conflicting ID changed the ledger: %+v", got)
+	}
+
+	assertOperationReplay(t, svc, create, &original)
+}
+
+func TestRestoreReceiptAfterRestart(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		legacy bool
+	}{{"current", false}, {"legacy", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "restore.db")
+			svc := openRestoreTestService(t, path)
+			before := snapshot(t, svc)
+			setup := createOp(
+				before.Generation,
+				ledger.TypeSettings,
+				ledger.SettingsID,
+				settingsPayload,
+			)
+			original := apply(t, svc, item(setup))[0]
+			req := restoreRequest()
+			req.ExpectedRevision = original.Revision
+			result := restoreOK(t, svc, req)
+
+			if result.Status != protocol.StatusApplied ||
+				result.Revision != req.ExpectedRevision+1 ||
+				result.Generation == before.Generation {
+				t.Fatalf("fresh restore = %+v", result)
+			}
+
+			restored := snapshot(t, svc)
+			if test.legacy {
+				// Preserve the old receipt bodies and remove the v4 discriminator.
+				_, err := svc.store.DB().
+					ExecContext(t.Context(), "UPDATE receipts SET is_restore = NULL")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := svc.store.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			svc = openRestoreTestService(t, path)
+			assertRestoreRetry(t, svc, req, result)
+			assertReceiptsSurvive(t, svc, setup, &original, req.OpID, restored.Generation)
+			assertRestoreReceiptRejectsWrites(t, svc, req.OpID, restored)
+		})
+	}
+}
+
+func openRestoreTestService(t *testing.T, path string) *Service {
+	t.Helper()
+
+	db, err := store.Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	return New(db, time.Now)
+}
+
+func assertRestoreReceiptRejectsWrites(
+	t *testing.T, svc *Service, restoreID string, before *protocol.Snapshot,
+) {
+	t.Helper()
+
+	create := createOp(before.Generation, ledger.TypePerson, personID, personPayload)
+	dependent := item(create, restoreID)
+	create.ID = restoreID
+
+	results := apply(t, svc, item(create), dependent)
+	assertResult(
+		t,
+		results[0],
+		protocol.StatusRejected,
+		protocol.CodeOperationIDConflict,
+		before.Revision,
+	)
+	assertResult(t, results[1], protocol.StatusSkipped, protocol.CodeDependencyNotApplied, 0)
+
+	if got := snapshot(t, svc); !reflect.DeepEqual(got, before) {
+		t.Fatalf("writes with a restore receipt changed the ledger: %+v", got)
+	}
+}
+
 func assertRestoredRows(t *testing.T, got *protocol.Snapshot, version string) {
 	t.Helper()
 
@@ -122,7 +244,8 @@ func assertReceiptsSurvive(
 		&protocol.ReceiptsRequest{OpIDs: []string{create.ID, restoreID}},
 	)
 	if err != nil || len(receipts.Receipts) != 2 || receipts.Generation != generation ||
-		receipts.Receipts[0].Generation != original.Generation || receipts.Receipts[1].OpID != restoreID {
+		receipts.Receipts[0].Generation != original.Generation || receipts.Receipts[0].Restore ||
+		receipts.Receipts[1].OpID != restoreID || !receipts.Receipts[1].Restore {
 		t.Fatalf("receipts after restore = %+v, error %v", receipts, err)
 	}
 }

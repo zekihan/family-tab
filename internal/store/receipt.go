@@ -20,6 +20,7 @@ type Receipt struct {
 	RecordType string
 	RecordID   string
 	Meta       Meta
+	IsRestore  bool
 }
 
 func (tx *Tx) Receipt(ctx context.Context, opID string) (Receipt, error) {
@@ -28,9 +29,15 @@ func (tx *Tx) Receipt(ctx context.Context, opID string) (Receipt, error) {
 		body    []byte
 	)
 
-	err := tx.Inner().QueryRowxContext(ctx,
-		"SELECT status, generation, revision, body FROM receipts WHERE op_id = ?", opID).
-		Scan(&receipt.Status, &receipt.Meta.Generation, &receipt.Meta.Revision, &body)
+	// Before v4, every ordinary receipt included blocking and only applied
+	// restores had an opId without that field.
+	err := tx.Inner().QueryRowxContext(ctx, `
+		SELECT status, generation, revision, body,
+			COALESCE(is_restore, status = 'applied'
+				AND json_type(body, '$.opId') IS 'text'
+				AND json_type(body, '$.blocking') IS NULL)
+		FROM receipts WHERE op_id = ?`, opID).
+		Scan(&receipt.Status, &receipt.Meta.Generation, &receipt.Meta.Revision, &body, &receipt.IsRestore)
 	if errors.Is(err, sql.ErrNoRows) {
 		return receipt, nil
 	}
@@ -48,11 +55,12 @@ func (tx *Tx) Receipt(ctx context.Context, opID string) (Receipt, error) {
 func (tx *Tx) SaveReceipt(ctx context.Context, receipt *Receipt) error {
 	_, err := tx.Inner().ExecContext(ctx, `
 		INSERT INTO receipts
-			(op_id, status, generation, revision, body, created_at, kind, record_type, record_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(op_id, status, generation, revision, body, created_at, kind, record_type, record_id, is_restore)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		receipt.OpID, receipt.Status, receipt.Meta.Generation, receipt.Meta.Revision,
 		string(receipt.Body), receipt.CreatedAt.UTC().Format(time.RFC3339Nano),
-		nullIfEmpty(receipt.Kind), nullIfEmpty(receipt.RecordType), nullIfEmpty(receipt.RecordID))
+		nullIfEmpty(receipt.Kind), nullIfEmpty(receipt.RecordType), nullIfEmpty(receipt.RecordID),
+		receipt.IsRestore)
 	if err != nil {
 		return fmt.Errorf("save receipt %q: %w", receipt.OpID, err)
 	}

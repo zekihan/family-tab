@@ -24,18 +24,22 @@ func TestCreateReceiptTime(t *testing.T) {
 			{
 				Body: []byte("{}"), CreatedAt: committed, OpID: "create", Status: "applied",
 				Kind: "create", RecordType: "payment", RecordID: "pay", Meta: Meta{Generation: "g", Revision: 1},
+				IsRestore: false,
 			},
 			{
 				Body: []byte("{}"), CreatedAt: committed, OpID: "update", Status: "applied",
 				Kind: "update", RecordType: "payment", RecordID: "pay", Meta: Meta{Generation: "g", Revision: 1},
+				IsRestore: false,
 			},
 			{
 				Body: []byte("{}"), CreatedAt: committed, OpID: "rejected", Status: "rejected",
 				Kind: "create", RecordType: "payment", RecordID: "pay", Meta: Meta{Generation: "g", Revision: 1},
+				IsRestore: false,
 			},
 			{
 				Body: []byte("{}"), CreatedAt: committed, OpID: "restore", Status: "applied",
 				Kind: "", RecordType: "", RecordID: "", Meta: Meta{Generation: "g", Revision: 1},
+				IsRestore: true,
 			},
 		} {
 			saveErr := tx.SaveReceipt(ctx, receipt)

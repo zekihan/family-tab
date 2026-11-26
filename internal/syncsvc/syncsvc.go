@@ -17,6 +17,8 @@ import (
 
 var errSource = errors.New("unknown record source")
 
+const operationIDConflictReason = "This operation ID is already used by a different kind of write."
+
 type Service struct {
 	store *store.Store
 	now   func() time.Time
@@ -88,6 +90,7 @@ func (svc *Service) Receipts(
 			}
 
 			fillReceiptFields(&receipt)
+			receipt.Restore = stored.IsRestore
 			response.Receipts = append(response.Receipts, receipt)
 		}
 
@@ -192,6 +195,23 @@ func (svc *Service) applyItem(
 	}
 
 	if stored.Body != nil {
+		if stored.IsRestore {
+			meta, metaErr := tx.Meta(ctx)
+			if metaErr != nil {
+				return protocol.OpResult{}, fmt.Errorf("read operation generation: %w", metaErr)
+			}
+
+			result := protocol.Receipt{
+				OpID: op.ID, Status: protocol.StatusRejected,
+				Code: new(protocol.CodeOperationIDConflict), Reason: new(operationIDConflictReason),
+				Generation: meta.Generation, Revision: meta.Revision,
+				Current: nil, Blocking: nil, Restore: false,
+			}
+			fillReceiptFields(&result)
+
+			return protocol.OpResult(result), nil
+		}
+
 		var result protocol.Receipt
 
 		err = json.Unmarshal(stored.Body, &result)
@@ -210,7 +230,7 @@ func (svc *Service) applyItem(
 			return protocol.OpResult{}, fmt.Errorf("look up dependency %q: %w", dep, lookupErr)
 		}
 
-		if receipt.Status != protocol.StatusApplied {
+		if receipt.Status != protocol.StatusApplied || receipt.IsRestore {
 			return protocol.OpResult{
 				OpID:       op.ID,
 				Status:     protocol.StatusSkipped,
@@ -220,6 +240,7 @@ func (svc *Service) applyItem(
 				Current:    nil,
 				Blocking:   nil,
 				Revision:   0,
+				Restore:    false,
 			}, nil
 		}
 	}
@@ -231,8 +252,15 @@ func (svc *Service) applyItem(
 
 	if op.Generation != meta.Generation {
 		return protocol.OpResult{
-			OpID: op.ID, Status: protocol.StatusHeld, Code: new(protocol.CodeGenerationMismatch),
-			Generation: meta.Generation, Reason: nil, Current: nil, Blocking: nil, Revision: 0,
+			OpID:       op.ID,
+			Status:     protocol.StatusHeld,
+			Code:       new(protocol.CodeGenerationMismatch),
+			Generation: meta.Generation,
+			Reason:     nil,
+			Current:    nil,
+			Blocking:   nil,
+			Revision:   0,
+			Restore:    false,
 		}, nil
 	}
 

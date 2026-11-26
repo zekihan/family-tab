@@ -1151,6 +1151,30 @@ test("a second restore preserves unapplied work when the first commits after a m
   assert.deepEqual(store.getSnapshot().reviewItems.map(row => [row.op.id, row.restore]), [[op.id, true]]);
 });
 
+test("restore recovery ignores an ordinary receipt with the same ID", async () => {
+  const { store, server } = harness();
+  await store.start();
+  const op: Operation = { id: crypto.randomUUID(), recordType: "person", recordId: person.id, kind: "update",
+    baseVersion: person.version, generation: initial().generation, createdAt: "2026-11-22T00:00:00Z",
+    patch: { name: "From backup" } };
+  const preview = await store.previewRestore(backup([{ order: 0, op, dependencies: [], reason: null }]));
+  server.hook.fetch = async path => {
+    if (path === "/api/restore") throw new TypeError("Response lost");
+    return undefined;
+  };
+  await assert.rejects(store.commitRestore(preview), /Could not reach/);
+  const request = server.calls.find(call => call.path === "/api/restore")?.body as RestoreRequest | undefined;
+  assert.ok(request);
+  server.receipts.set(request.opId, {
+    opId: request.opId, status: "applied", code: null, reason: null, blocking: [], current: null,
+    generation: server.snapshot.generation, revision: server.snapshot.revision,
+  });
+  server.hook.fetch = undefined;
+  await store.syncNow();
+  assert.deepEqual(store.getSnapshot().reviewItems, []);
+  assert.equal(server.calls.filter(call => call.path === "/api/restore").length, 1);
+});
+
 test("a lost apply response is reconciled from the stored receipt without sending the operation twice", async () => {
   const { store, clock, server } = harness();
   await store.start();
